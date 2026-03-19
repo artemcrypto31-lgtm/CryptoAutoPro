@@ -15,7 +15,7 @@ def load_trade_history():
     Парсим файл logs/bot.log и извлекаем все сделки.
     """
     trades = []
-    log_file = 'logs/bot.log'
+    log_file = 'logs/futures_bot.log'
 
     if not os.path.exists(log_file):
         print("⚠️  Лог файл не найден. Используем тестовые данные.")

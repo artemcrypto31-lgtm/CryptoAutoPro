@@ -19,16 +19,10 @@ bot_process = None
 # ── ЗАЩИТА — только владелец ─────────────────────────────────
 
 def owner_only(func):
-    """
-    Декоратор защиты — блокирует всех кроме владельца.
-    Если кто-то чужой напишет боту — он получит отказ.
-    """
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         if user_id != TELEGRAM_CHAT_ID:
-            await update.message.reply_text(
-                "⛔ Доступ запрещён. Это приватный бот."
-            )
+            await update.message.reply_text("⛔ Доступ запрещён. Это приватный бот.")
             return
         return await func(update, context)
     return wrapper
@@ -36,7 +30,6 @@ def owner_only(func):
 # ── ГЛАВНОЕ МЕНЮ ─────────────────────────────────────────────
 
 def main_keyboard():
-    """Главная клавиатура с кнопками управления"""
     keyboard = [
         [
             InlineKeyboardButton("🟢 Запустить бота",  callback_data="start_bot"),
@@ -44,14 +37,15 @@ def main_keyboard():
         ],
         [
             InlineKeyboardButton("📊 Статус",          callback_data="status"),
-            InlineKeyboardButton("📈 Отчёт",           callback_data="report")
+            InlineKeyboardButton("📈 Статистика",      callback_data="stats")
         ],
         [
             InlineKeyboardButton("🧠 Самоанализ ИИ",   callback_data="analysis"),
             InlineKeyboardButton("💰 Баланс",          callback_data="balance")
         ],
         [
-            InlineKeyboardButton("📋 Последний лог",   callback_data="log")
+            InlineKeyboardButton("📋 Последний лог",   callback_data="log"),
+            InlineKeyboardButton("🔍 Отчёт",           callback_data="report")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -60,25 +54,19 @@ def main_keyboard():
 
 @owner_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /start — главное меню"""
     await update.message.reply_text(
-        "🤖 *CryptoAutoPro* — панель управления\n\n"
-        "Выбери действие:",
+        "🤖 *CryptoAutoPro* — панель управления\n\nВыбери действие:",
         parse_mode='Markdown',
         reply_markup=main_keyboard()
     )
 
 @owner_only
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /help — список команд"""
     text = (
         "📋 *Доступные команды:*\n\n"
         "/start — главное меню\n"
         "/status — статус бота\n"
         "/balance — текущий баланс\n"
-        "/report — отчёт по сделкам\n"
-        "/analysis — самоанализ ИИ\n"
-        "/log — последние записи лога\n"
         "/help — эта справка"
     )
     await update.message.reply_text(text, parse_mode='Markdown')
@@ -86,31 +74,22 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ЗАПУСКА СКРИПТОВ ─────────────────
 
 def run_script(script_name):
-    """
-    Запускаем Python-скрипт и возвращаем его вывод.
-    Используем sys.executable — это точный путь к текущему Python
-    внутри нашего виртуального окружения.
-    """
     try:
         result = subprocess.run(
-    [sys.executable, "-u", script_name],
-    capture_output=True,
-    timeout=90,
-    cwd=os.getcwd(),
-    env={**os.environ, "PYTHONIOENCODING": "utf-8"}
-)
-
-        # Пробуем utf-8, при ошибке — игнорируем проблемные символы
+            [sys.executable, "-u", script_name],
+            capture_output=True,
+            timeout=90,
+            cwd=os.getcwd(),
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"}
+        )
         stdout = result.stdout.decode('utf-8', errors='ignore').strip()
         stderr = result.stderr.decode('utf-8', errors='ignore').strip()
-
         if stdout:
             return stdout
         elif stderr:
             return f"⚠️ Ошибка скрипта:\n{stderr}"
         else:
             return f"Скрипт завершился без вывода (код: {result.returncode})"
-
     except subprocess.TimeoutExpired:
         return "❌ Превышено время ожидания (90 сек)"
     except Exception as e:
@@ -119,11 +98,9 @@ def run_script(script_name):
 # ── ОБРАБОТКА КНОПОК ─────────────────────────────────────────
 
 async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатываем нажатия всех кнопок"""
     query = update.callback_query
     await query.answer()
 
-    # Защита на кнопки
     if query.from_user.id != TELEGRAM_CHAT_ID:
         await query.edit_message_text("⛔ Доступ запрещён.")
         return
@@ -142,15 +119,14 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         try:
-            log_file = open('logs/bot_output.log', 'a', encoding='utf-8')
+            log_file    = open('logs/bot_output.log', 'a', encoding='utf-8')
             bot_process = subprocess.Popen(
-                [sys.executable, "-u", "bot.py"],
+                [sys.executable, "-u", "futures_bot.py"],
                 stdout=log_file,
                 stderr=log_file
             )
             await query.edit_message_text(
-                "🟢 *Бот запущен!*\n\n"
-                "Торговля активна. Буду присылать уведомления о каждой сделке.",
+                "🟢 *Бот запущен!*\n\nТорговля активна. Буду присылать уведомления о каждой сделке.",
                 parse_mode='Markdown',
                 reply_markup=main_keyboard()
             )
@@ -165,8 +141,7 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bot_process and bot_process.poll() is None:
             bot_process.terminate()
             await query.edit_message_text(
-                "🔴 *Бот остановлен.*\n\n"
-                "Торговля приостановлена.",
+                "🔴 *Бот остановлен.*\n\nТорговля приостановлена.",
                 parse_mode='Markdown',
                 reply_markup=main_keyboard()
             )
@@ -178,20 +153,32 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Статус ───────────────────────────────────────────────
     elif data == "status":
-        running = bot_process and bot_process.poll() is None
-        status  = "🟢 Работает" if running else "🔴 Остановлен"
-
+        running  = bot_process and bot_process.poll() is None
+        status   = "🟢 Работает" if running else "🔴 Остановлен"
         last_log = "Нет данных"
-        if os.path.exists('logs/bot.log'):
-            with open('logs/bot.log', 'r', encoding='utf-8') as f:
+
+        if os.path.exists('logs/futures_bot.log'):
+            with open('logs/futures_bot.log', 'r', encoding='utf-8') as f:
                 lines = [l.strip() for l in f.readlines() if l.strip()]
                 if lines:
                     last_log = lines[-1]
 
         await query.edit_message_text(
-            f"📊 *Статус системы*\n\n"
-            f"Бот: {status}\n\n"
-            f"Последнее действие:\n`{last_log}`",
+            f"📊 *Статус системы*\n\nБот: {status}\n\nПоследнее действие:\n`{last_log}`",
+            parse_mode='Markdown',
+            reply_markup=main_keyboard()
+        )
+
+    # ── Статистика сделок ────────────────────────────────────
+    elif data == "stats":
+        try:
+            from trade_stats import format_stats_telegram
+            text = format_stats_telegram()
+        except Exception as e:
+            text = f"❌ Ошибка получения статистики: {e}"
+
+        await query.edit_message_text(
+            text,
             parse_mode='Markdown',
             reply_markup=main_keyboard()
         )
@@ -203,28 +190,22 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_keyboard()
         )
         try:
-            from binance.client import Client
-            import time
-            API_KEY    = os.getenv('BINANCE_API_KEY')
-            API_SECRET = os.getenv('BINANCE_API_SECRET')
-            client     = Client(API_KEY, API_SECRET, testnet=True)
-            server_time = client.get_server_time()
-            client.timestamp_offset = (
-                server_time['serverTime'] - int(time.time() * 1000)
+            from binance.um_futures import UMFutures
+            client  = UMFutures(
+                key=os.getenv('FUTURES_API_KEY'),
+                secret=os.getenv('FUTURES_API_SECRET'),
+                base_url="https://testnet.binancefuture.com"
             )
-            account  = client.get_account()
-            balances = [
-                b for b in account['balances']
-                if float(b['free']) > 0 or float(b['locked']) > 0
-            ]
-            text = "💰 *Текущий баланс (Testnet):*\n\n"
-            for b in balances[:10]:
-                free   = float(b['free'])
-                locked = float(b['locked'])
-                text  += f"  {b['asset']}: `{free:.4f}`"
-                if locked > 0:
-                    text += f" (заморожено: {locked:.4f})"
-                text += "\n"
+            account = client.account()
+            text    = "💰 *Баланс Futures (Testnet):*\n\n"
+            for asset in account['assets']:
+                balance = float(asset['walletBalance'])
+                if balance > 0:
+                    pnl   = float(asset['unrealizedProfit'])
+                    text += f"  {asset['asset']}: `{balance:.2f}`"
+                    if pnl != 0:
+                        text += f" (PnL: {pnl:+.2f})"
+                    text += "\n"
         except Exception as e:
             text = f"❌ Ошибка получения баланса:\n{e}"
 
@@ -237,15 +218,14 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Отчёт по сделкам ─────────────────────────────────────
     elif data == "report":
         try:
-            if os.path.exists('logs/bot.log'):
-                with open('logs/bot.log', 'r', encoding='utf-8') as f:
+            if os.path.exists('logs/futures_bot.log'):
+                with open('logs/futures_bot.log', 'r', encoding='utf-8') as f:
                     lines = f.readlines()
 
                 trade_lines = [
                     l.strip() for l in lines
                     if any(x in l for x in [
-                        'LONG', 'SHORT', 'STOP-LOSS',
-                        'TAKE-PROFIT', 'закрыта', 'Вердикт'
+                        'LONG', 'SHORT', 'SL', 'TP', 'закрыто', 'открыт'
                     ])
                 ]
 
@@ -273,15 +253,8 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_keyboard()
         )
 
-        # Запускаем скрипт в отдельном потоке чтобы не блокировать бота
         loop   = asyncio.get_running_loop()
-        output = await loop.run_in_executor(
-            None,
-            run_script,
-            "self_analysis.py"
-        )
-
-        # Telegram ограничивает сообщение 4096 символами
+        output = await loop.run_in_executor(None, run_script, "self_analysis.py")
         output = output[:3500]
 
         await context.bot.send_message(
@@ -293,8 +266,8 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Последний лог ────────────────────────────────────────
     elif data == "log":
         try:
-            if os.path.exists('logs/bot.log'):
-                with open('logs/bot.log', 'r', encoding='utf-8') as f:
+            if os.path.exists('logs/futures_bot.log'):
+                with open('logs/futures_bot.log', 'r', encoding='utf-8') as f:
                     lines = f.readlines()
                 last_lines = "".join(lines[-15:]).strip()
                 text = f"📋 *Последние 15 записей лога:*\n\n`{last_lines}`"
@@ -312,10 +285,6 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── УВЕДОМЛЕНИЯ О СДЕЛКАХ ────────────────────────────────────
 
 def send_trade_notification(message):
-    """
-    Отправляем уведомление о сделке.
-    Эта функция вызывается из bot.py при каждой сделке.
-    """
     token = os.getenv('TELEGRAM_TOKEN')
     chat  = os.getenv('TELEGRAM_CHAT_ID')
     url   = f"https://api.telegram.org/bot{token}/sendMessage"

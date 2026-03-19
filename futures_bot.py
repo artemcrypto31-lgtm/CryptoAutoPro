@@ -54,8 +54,7 @@ def send_telegram(message):
         pass
 
 def get_active_symbols():
-    """Загружаем список активов от сканера или используем дефолтный"""
-    asset_file = 'data/active_assets.txt'
+    asset_file = 'data/futures_active.txt'
     if os.path.exists(asset_file):
         with open(asset_file, 'r') as f:
             symbols = [s.strip() for s in f.readlines() if s.strip()]
