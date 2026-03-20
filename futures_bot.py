@@ -453,6 +453,85 @@ def run():
     # Активные позиции: symbol → {direction, quantity, trade_id, stop, take, entry}
     positions = {}
 
+def restore_positions():
+    """
+    При старте бота читаем открытые позиции с биржи.
+    Это восстанавливает контроль после перезапуска.
+    """
+    restored = {}
+    try:
+        all_positions = client.get_position_risk()
+        for p in all_positions:
+            amt = float(p['positionAmt'])
+            if amt == 0:
+                continue
+
+            symbol    = p['symbol']
+            direction = 'LONG' if amt > 0 else 'SHORT'
+            entry     = float(p['entryPrice'])
+            quantity  = abs(amt)
+
+            # Восстанавливаем стоп и тейк из настроек
+            if direction == 'LONG':
+                stop = entry * (1 - STOP_LOSS_PCT / 100)
+                take = entry * (1 + TAKE_PROFIT_PCT / 100)
+            else:
+                stop = entry * (1 + STOP_LOSS_PCT / 100)
+                take = entry * (1 - TAKE_PROFIT_PCT / 100)
+
+            # Создаём запись в статистике
+            from trade_stats import load_history
+            history  = load_history()
+            open_ids = [t['id'] for t in history if t['status'] == 'OPEN'
+                       and t['symbol'] == symbol]
+
+            if open_ids:
+                trade_id = open_ids[-1]
+                log(f"♻️  Восстановлена позиция: {direction} {symbol} "
+                    f"по {entry:.4f} (trade_id={trade_id})")
+            else:
+                trade_id = record_open(
+                    symbol, direction, entry,
+                    stop, take,
+                    quantity * entry, LEVERAGE
+                )
+                log(f"♻️  Новая запись для позиции: {direction} {symbol} "
+                    f"по {entry:.4f}")
+
+            restored[symbol] = {
+                'direction': direction,
+                'quantity':  quantity,
+                'trade_id':  trade_id,
+                'entry':     entry,
+                'stop':      stop,
+                'take':      take
+            }
+
+            send_telegram(
+                f"♻️ *Восстановлена позиция*\n"
+                f"{direction} {symbol}\n"
+                f"Вход: `{entry:.4f}`\n"
+                f"Стоп: `{stop:.4f}`\n"
+                f"Тейк: `{take:.4f}`"
+            )
+
+    except Exception as e:
+        log(f"⚠️ Ошибка восстановления позиций: {e}")
+
+    if restored:
+        log(f"♻️  Восстановлено позиций: {len(restored)}")
+    else:
+        log("♻️  Открытых позиций не найдено")
+
+    return restored
+
+
+def run():
+    positions = restore_positions()
+
+    log("=" * 55)
+
+
     log("=" * 55)
     log("🤖 CryptoAutoPro FUTURES запущен")
     log(f"   Депозит:  ${TRADE_AMOUNT_USDT} USDT")
