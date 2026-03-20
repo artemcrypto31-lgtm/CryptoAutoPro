@@ -13,10 +13,9 @@ TELEGRAM_TOKEN     = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID   = int(os.getenv('TELEGRAM_CHAT_ID'))
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 
-# Процесс торгового бота — храним чтобы можно было остановить
 bot_process = None
 
-# ── ЗАЩИТА — только владелец ─────────────────────────────────
+# ── ЗАЩИТА ───────────────────────────────────────────────────
 
 def owner_only(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -40,12 +39,15 @@ def main_keyboard():
             InlineKeyboardButton("📈 Статистика",      callback_data="stats")
         ],
         [
-            InlineKeyboardButton("🧠 Самоанализ ИИ",   callback_data="analysis"),
+            InlineKeyboardButton("📌 Позиции",         callback_data="positions"),
             InlineKeyboardButton("💰 Баланс",          callback_data="balance")
         ],
         [
-            InlineKeyboardButton("📋 Последний лог",   callback_data="log"),
+            InlineKeyboardButton("🧠 Самоанализ ИИ",   callback_data="analysis"),
             InlineKeyboardButton("🔍 Отчёт",           callback_data="report")
+        ],
+        [
+            InlineKeyboardButton("📋 Последний лог",   callback_data="log")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -65,13 +67,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📋 *Доступные команды:*\n\n"
         "/start — главное меню\n"
-        "/status — статус бота\n"
-        "/balance — текущий баланс\n"
         "/help — эта справка"
     )
     await update.message.reply_text(text, parse_mode='Markdown')
 
-# ── ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ЗАПУСКА СКРИПТОВ ─────────────────
+# ── ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ──────────────────────────────────
 
 def run_script(script_name):
     try:
@@ -87,7 +87,7 @@ def run_script(script_name):
         if stdout:
             return stdout
         elif stderr:
-            return f"⚠️ Ошибка скрипта:\n{stderr}"
+            return f"⚠️ Ошибка:\n{stderr}"
         else:
             return f"Скрипт завершился без вывода (код: {result.returncode})"
     except subprocess.TimeoutExpired:
@@ -107,88 +107,112 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
-    # ── Запуск торгового бота ────────────────────────────────
+    # ── Запуск бота ──────────────────────────────────────────
     if data == "start_bot":
         global bot_process
-
         if bot_process and bot_process.poll() is None:
-            await query.edit_message_text(
-                "⚠️ Бот уже запущен!",
-                reply_markup=main_keyboard()
-            )
+            await query.edit_message_text("⚠️ Бот уже запущен!", reply_markup=main_keyboard())
             return
-
         try:
             log_file    = open('logs/bot_output.log', 'a', encoding='utf-8')
             bot_process = subprocess.Popen(
                 [sys.executable, "-u", "futures_bot.py"],
-                stdout=log_file,
-                stderr=log_file
+                stdout=log_file, stderr=log_file
             )
             await query.edit_message_text(
                 "🟢 *Бот запущен!*\n\nТорговля активна. Буду присылать уведомления о каждой сделке.",
-                parse_mode='Markdown',
-                reply_markup=main_keyboard()
+                parse_mode='Markdown', reply_markup=main_keyboard()
             )
         except Exception as e:
-            await query.edit_message_text(
-                f"❌ Ошибка запуска бота: {e}",
-                reply_markup=main_keyboard()
-            )
+            await query.edit_message_text(f"❌ Ошибка запуска: {e}", reply_markup=main_keyboard())
 
-    # ── Остановка торгового бота ─────────────────────────────
+    # ── Остановка бота ───────────────────────────────────────
     elif data == "stop_bot":
         if bot_process and bot_process.poll() is None:
             bot_process.terminate()
             await query.edit_message_text(
                 "🔴 *Бот остановлен.*\n\nТорговля приостановлена.",
-                parse_mode='Markdown',
-                reply_markup=main_keyboard()
+                parse_mode='Markdown', reply_markup=main_keyboard()
             )
         else:
-            await query.edit_message_text(
-                "⚠️ Бот сейчас не запущен.",
-                reply_markup=main_keyboard()
-            )
+            await query.edit_message_text("⚠️ Бот сейчас не запущен.", reply_markup=main_keyboard())
 
     # ── Статус ───────────────────────────────────────────────
     elif data == "status":
         running  = bot_process and bot_process.poll() is None
         status   = "🟢 Работает" if running else "🔴 Остановлен"
         last_log = "Нет данных"
-
         if os.path.exists('logs/futures_bot.log'):
             with open('logs/futures_bot.log', 'r', encoding='utf-8') as f:
                 lines = [l.strip() for l in f.readlines() if l.strip()]
                 if lines:
                     last_log = lines[-1]
-
         await query.edit_message_text(
             f"📊 *Статус системы*\n\nБот: {status}\n\nПоследнее действие:\n`{last_log}`",
-            parse_mode='Markdown',
-            reply_markup=main_keyboard()
+            parse_mode='Markdown', reply_markup=main_keyboard()
         )
 
-    # ── Статистика сделок ────────────────────────────────────
+    # ── Открытые позиции ─────────────────────────────────────
+    elif data == "positions":
+        try:
+            from binance.um_futures import UMFutures
+            client = UMFutures(
+                key=os.getenv('FUTURES_API_KEY'),
+                secret=os.getenv('FUTURES_API_SECRET'),
+                base_url="https://testnet.binancefuture.com"
+            )
+            all_pos  = client.get_position_risk()
+            open_pos = [p for p in all_pos if float(p['positionAmt']) != 0]
+
+            if not open_pos:
+                text = "📌 *Открытых позиций нет*\n\nБот ищет сигналы..."
+            else:
+                text = f"📌 *Открытые позиции: {len(open_pos)}*\n\n"
+                for p in open_pos:
+                    amt       = float(p['positionAmt'])
+                    entry     = float(p['entryPrice'])
+                    mark      = float(p['markPrice'])
+                    pnl       = float(p['unRealizedProfit'])
+                    direction = 'LONG' if amt > 0 else 'SHORT'
+                    dir_icon  = "🟢" if amt > 0 else "🔴"
+                    pnl_icon  = "📈" if pnl >= 0 else "📉"
+
+                    if direction == 'LONG':
+                        pnl_pct = (mark - entry) / entry * 100
+                        stop    = entry * 0.985
+                        take    = entry * 1.030
+                    else:
+                        pnl_pct = (entry - mark) / entry * 100
+                        stop    = entry * 1.015
+                        take    = entry * 0.970
+
+                    text += (
+                        f"{dir_icon} *{direction} {p['symbol']}*\n"
+                        f"💵 Вход:     `{entry:.5f}`\n"
+                        f"📍 Текущая:  `{mark:.5f}`\n"
+                        f"🛑 Стоп:     `{stop:.5f}`\n"
+                        f"🎯 Тейк:     `{take:.5f}`\n"
+                        f"{pnl_icon} P&L:     `{pnl_pct:+.2f}%` (`{pnl:+.4f} USDT`)\n"
+                        f"📦 Кол-во:  `{abs(amt):.0f}`\n"
+                        f"{'─' * 28}\n"
+                    )
+        except Exception as e:
+            text = f"❌ Ошибка получения позиций: {e}"
+
+        await query.edit_message_text(text[:4000], parse_mode='Markdown', reply_markup=main_keyboard())
+
+    # ── Статистика ───────────────────────────────────────────
     elif data == "stats":
         try:
             from trade_stats import format_stats_telegram
             text = format_stats_telegram()
         except Exception as e:
-            text = f"❌ Ошибка получения статистики: {e}"
-
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=main_keyboard()
-        )
+            text = f"❌ Ошибка статистики: {e}"
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=main_keyboard())
 
     # ── Баланс ───────────────────────────────────────────────
     elif data == "balance":
-        await query.edit_message_text(
-            "💰 Запрашиваю баланс...",
-            reply_markup=main_keyboard()
-        )
+        await query.edit_message_text("💰 Запрашиваю баланс...", reply_markup=main_keyboard())
         try:
             from binance.um_futures import UMFutures
             client  = UMFutures(
@@ -207,28 +231,19 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text += f" (PnL: {pnl:+.2f})"
                     text += "\n"
         except Exception as e:
-            text = f"❌ Ошибка получения баланса:\n{e}"
+            text = f"❌ Ошибка баланса: {e}"
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=main_keyboard())
 
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=main_keyboard()
-        )
-
-    # ── Отчёт по сделкам ─────────────────────────────────────
+    # ── Отчёт ────────────────────────────────────────────────
     elif data == "report":
         try:
             if os.path.exists('logs/futures_bot.log'):
                 with open('logs/futures_bot.log', 'r', encoding='utf-8') as f:
                     lines = f.readlines()
-
                 trade_lines = [
                     l.strip() for l in lines
-                    if any(x in l for x in [
-                        'LONG', 'SHORT', 'SL', 'TP', 'закрыто', 'открыт'
-                    ])
+                    if any(x in l for x in ['LONG', 'SHORT', 'SL', 'TP', 'ПРИБЫЛЬ', 'УБЫТОК'])
                 ]
-
                 if trade_lines:
                     text = "📈 *Последние торговые события:*\n\n"
                     for line in trade_lines[-10:]:
@@ -238,32 +253,24 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 text = "📈 Лог пустой. Сначала запусти бота."
         except Exception as e:
-            text = f"❌ Ошибка чтения лога: {e}"
+            text = f"❌ Ошибка лога: {e}"
+        await query.edit_message_text(text[:4000], parse_mode='Markdown', reply_markup=main_keyboard())
 
-        await query.edit_message_text(
-            text[:4000],
-            parse_mode='Markdown',
-            reply_markup=main_keyboard()
-        )
-
-    # ── Самоанализ ИИ ────────────────────────────────────────
+    # ── Самоанализ ───────────────────────────────────────────
     elif data == "analysis":
         await query.edit_message_text(
             "🧠 Запускаю самоанализ...\nПодожди около 30 секунд.",
             reply_markup=main_keyboard()
         )
-
         loop   = asyncio.get_running_loop()
         output = await loop.run_in_executor(None, run_script, "self_analysis.py")
-        output = output[:3500]
-
         await context.bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
-            text=f"🧠 *Результат самоанализа:*\n\n`{output}`",
+            text=f"🧠 *Результат самоанализа:*\n\n`{output[:3500]}`",
             parse_mode='Markdown'
         )
 
-    # ── Последний лог ────────────────────────────────────────
+    # ── Лог ─────────────────────────────────────────────────
     elif data == "log":
         try:
             if os.path.exists('logs/futures_bot.log'):
@@ -272,28 +279,19 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 last_lines = "".join(lines[-15:]).strip()
                 text = f"📋 *Последние 15 записей лога:*\n\n`{last_lines}`"
             else:
-                text = "📋 Лог пустой. Бот ещё не запускался."
+                text = "📋 Лог пустой."
         except Exception as e:
-            text = f"❌ Ошибка чтения лога: {e}"
+            text = f"❌ Ошибка лога: {e}"
+        await query.edit_message_text(text[:4000], parse_mode='Markdown', reply_markup=main_keyboard())
 
-        await query.edit_message_text(
-            text[:4000],
-            parse_mode='Markdown',
-            reply_markup=main_keyboard()
-        )
-
-# ── УВЕДОМЛЕНИЯ О СДЕЛКАХ ────────────────────────────────────
+# ── УВЕДОМЛЕНИЯ ──────────────────────────────────────────────
 
 def send_trade_notification(message):
     token = os.getenv('TELEGRAM_TOKEN')
     chat  = os.getenv('TELEGRAM_CHAT_ID')
     url   = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
-        requests.post(
-            url,
-            json={"chat_id": chat, "text": message, "parse_mode": "Markdown"},
-            timeout=5
-        )
+        requests.post(url, json={"chat_id": chat, "text": message, "parse_mode": "Markdown"}, timeout=5)
     except Exception:
         pass
 
@@ -305,7 +303,6 @@ def main():
     print(f"   Владелец: {TELEGRAM_CHAT_ID}")
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help",  cmd_help))
     app.add_handler(CallbackQueryHandler(handle_button))

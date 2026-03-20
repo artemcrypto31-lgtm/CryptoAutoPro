@@ -76,7 +76,7 @@ def get_candles(symbol, interval='15m', limit=200):
         df['time'] = pd.to_datetime(df['time'], unit='ms')
         return df
     except Exception as e:
-        log(f"❌ Ошибка получения свечей {symbol}: {e}")
+        log(f"Ошибка получения свечей {symbol}: {e}")
         return None
 
 # ── СТРУКТУРА РЫНКА ──────────────────────────────────────────
@@ -104,31 +104,19 @@ def analyze_structure(highs, lows):
     ll = lows[-1]['price']
     pl = lows[-2]['price']
     if lh > ph and ll > pl:
-        trend = 'BULLISH'
-        desc  = 'Бычий тренд (HH/HL)'
+        trend, desc = 'BULLISH', 'Бычий тренд (HH/HL)'
     elif lh < ph and ll < pl:
-        trend = 'BEARISH'
-        desc  = 'Медвежий тренд (LH/LL)'
+        trend, desc = 'BEARISH', 'Медвежий тренд (LH/LL)'
     else:
-        trend = 'NEUTRAL'
-        desc  = 'Нейтральная структура'
-    return {
-        'trend': trend, 'description': desc,
-        'last_high': lh, 'last_low': ll,
-        'prev_high': ph, 'prev_low': pl
-    }
+        trend, desc = 'NEUTRAL', 'Нейтральная структура'
+    return {'trend': trend, 'description': desc,
+            'last_high': lh, 'last_low': ll,
+            'prev_high': ph, 'prev_low': pl}
 
 def find_liquidity_zones(highs, lows, current_price):
-    resistance = sorted(
-        [h['price'] for h in highs if h['price'] > current_price]
-    )[:3]
-    support = sorted(
-        [l['price'] for l in lows if l['price'] < current_price],
-        reverse=True
-    )[:3]
+    resistance = sorted([h['price'] for h in highs if h['price'] > current_price])[:3]
+    support    = sorted([l['price'] for l in lows  if l['price'] < current_price], reverse=True)[:3]
     return {'resistance': resistance, 'support': support}
-
-# ── ОБЪЁМ ────────────────────────────────────────────────────
 
 def analyze_volume(df):
     df            = df.copy()
@@ -138,47 +126,33 @@ def analyze_volume(df):
 
 # ── AI-ВАЛИДАТОР ─────────────────────────────────────────────
 
-def validate_trade(symbol, direction, entry, stop, take,
-                   structure, volume_ratio, current_price):
+def validate_trade(symbol, direction, entry, stop, take, structure, volume_ratio, current_price):
     if direction == 'LONG':
-        risk   = entry - stop
-        reward = take - entry
+        risk, reward = entry - stop, take - entry
     else:
-        risk   = stop - entry
-        reward = entry - take
-
+        risk, reward = stop - entry, entry - take
     rr = reward / risk if risk > 0 else 0
 
     prompt = f"""
-Ты — профессиональный фьючерсный трейдер.
-Оцени сделку и ответь ТОЛЬКО в JSON.
-
+Ты профессиональный фьючерсный трейдер. Оцени сделку. Ответь ТОЛЬКО JSON.
 СДЕЛКА: {direction} {symbol}
-Вход: {entry:.4f} | Стоп: {stop:.4f} | Тейк: {take:.4f}
-Риск: {(risk/entry*100):.2f}% | Прибыль: {(reward/entry*100):.2f}% | R:R = 1:{rr:.2f}
+Вход: {entry:.5f} | Стоп: {stop:.5f} | Тейк: {take:.5f}
+Риск: {(risk/entry*100):.2f}% | Прибыль: {(reward/entry*100):.2f}% | R:R=1:{rr:.2f}
 Тренд: {structure['trend']} | Объём: {volume_ratio:.2f}x
-
 {{"verdict":"APPROVE"/"REJECT","confidence":0-100,"main_reason":"причина","risks":["риск1"]}}
 Только JSON.
 """
     try:
         resp    = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type":  "application/json"
-            },
-            json={
-                "model":       "anthropic/claude-3-haiku",
-                "messages":    [{"role": "user", "content": prompt}],
-                "temperature": 0.1
-            },
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "anthropic/claude-3-haiku", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1},
             timeout=30
         )
         content = resp.json()['choices'][0]['message']['content']
         return json.loads(content), rr
     except Exception as e:
-        log(f"⚠️ AI-валидатор недоступен: {e}")
+        log(f"AI недоступен: {e}")
         return None, rr
 
 # ── ТОРГОВЫЕ ОПЕРАЦИИ ────────────────────────────────────────
@@ -187,10 +161,9 @@ def set_leverage(symbol):
     try:
         client.change_leverage(symbol=symbol, leverage=LEVERAGE)
     except Exception as e:
-        log(f"⚠️ Ошибка установки плеча {symbol}: {e}")
+        log(f"Ошибка плеча {symbol}: {e}")
 
 def get_lot_precision(symbol):
-    """Точность количества (LOT_SIZE)"""
     try:
         info = client.exchange_info()
         for s in info['symbols']:
@@ -204,7 +177,6 @@ def get_lot_precision(symbol):
     return 3
 
 def get_price_precision(symbol):
-    """Точность цены (PRICE_FILTER) — нужна для SL/TP ордеров"""
     try:
         info = client.exchange_info()
         for s in info['symbols']:
@@ -224,15 +196,10 @@ def get_balance():
             if asset['asset'] == 'USDT':
                 return float(asset['availableBalance'])
     except Exception as e:
-        log(f"❌ Ошибка получения баланса: {e}")
+        log(f"Ошибка баланса: {e}")
     return 0.0
 
 def get_real_position(symbol):
-    """
-    Получаем реальное состояние позиции с биржи.
-    Возвращает количество контрактов (0 = позиция закрыта).
-    Положительное = LONG, отрицательное = SHORT.
-    """
     try:
         positions = client.get_position_risk(symbol=symbol)
         for p in positions:
@@ -243,24 +210,14 @@ def get_real_position(symbol):
     return 0.0
 
 def cancel_open_orders(symbol):
-    """Отменяем все открытые ордера по символу (SL/TP если позиция закрылась)"""
     try:
         client.cancel_open_orders(symbol=symbol)
-        log(f"   🗑️ Открытые ордера {symbol} отменены")
+        log(f"   Ордера {symbol} отменены")
     except Exception as e:
-        log(f"   ⚠️ Ошибка отмены ордеров {symbol}: {e}")
+        log(f"   Ошибка отмены ордеров {symbol}: {e}")
 
 def open_position(symbol, direction, entry_price, stop, take):
-    """
-    Открываем позицию с РЕАЛЬНЫМИ SL и TP ордерами на бирже.
-
-    После открытия рыночного ордера сразу выставляем:
-    - STOP_MARKET ордер = стоп-лосс (Binance закроет мгновенно)
-    - TAKE_PROFIT_MARKET ордер = тейк-профит (Binance закроет мгновенно)
-
-    Это решает проблему когда цена быстро сходила к стопу
-    и вернулась — биржа уже закрыла позицию сама.
-    """
+    """Открываем позицию с детальным уведомлением в Telegram."""
     try:
         set_leverage(symbol)
 
@@ -270,194 +227,109 @@ def open_position(symbol, direction, entry_price, stop, take):
         lot_prec     = get_lot_precision(symbol)
         price_prec   = get_price_precision(symbol)
         quantity     = round(size_usdt / entry_price, lot_prec)
-        stop_rounded = round(stop, price_prec)
-        take_rounded = round(take, price_prec)
+        stop_r       = round(stop, price_prec)
+        take_r       = round(take, price_prec)
+        side         = 'BUY'  if direction == 'LONG' else 'SELL'
+        close_side   = 'SELL' if direction == 'LONG' else 'BUY'
 
-        side       = 'BUY'  if direction == 'LONG' else 'SELL'
-        close_side = 'SELL' if direction == 'LONG' else 'BUY'
+        # R:R для уведомления
+        if direction == 'LONG':
+            rr = round((take - entry_price) / (entry_price - stop), 2) if (entry_price - stop) > 0 else 0
+        else:
+            rr = round((entry_price - take) / (stop - entry_price), 2) if (stop - entry_price) > 0 else 0
 
-        # Шаг 1 — открываем рыночный ордер
-        order = client.new_order(
-            symbol=symbol,
-            side=side,
-            type='MARKET',
-            quantity=quantity
-        )
-
-        log(f"{'🟢' if direction == 'LONG' else '🔴'} "
-            f"{direction} {symbol}: {quantity} по {entry_price:.4f}")
-
-        # Небольшая пауза чтобы позиция открылась на бирже
+        # Шаг 1 — рыночный ордер
+        order = client.new_order(symbol=symbol, side=side, type='MARKET', quantity=quantity)
+        log(f"{'LONG' if direction=='LONG' else 'SHORT'} {symbol}: {quantity} @ {entry_price:.5f}")
         time.sleep(0.5)
 
-        # Шаг 2 — выставляем реальный Stop-Loss на бирже
+        # Шаг 2 — SL
         sl_ok = False
         try:
-            client.new_order(
-                symbol=symbol,
-                side=close_side,
-                type='STOP_MARKET',
-                stopPrice=stop_rounded,
-                closePosition='true',
-                timeInForce='GTE_GTC'
-            )
-            log(f"   🛑 SL ордер на бирже: {stop_rounded}")
+            client.new_order(symbol=symbol, side=close_side, type='STOP_MARKET',
+                           stopPrice=stop_r, closePosition='true', timeInForce='GTE_GTC')
+            log(f"   SL: {stop_r}")
             sl_ok = True
         except Exception as e:
-            log(f"   ⚠️ Ошибка SL ордера: {e}")
+            log(f"   SL ошибка: {e}")
 
-        # Шаг 3 — выставляем реальный Take-Profit на бирже
+        # Шаг 3 — TP
         tp_ok = False
         try:
-            client.new_order(
-                symbol=symbol,
-                side=close_side,
-                type='TAKE_PROFIT_MARKET',
-                stopPrice=take_rounded,
-                closePosition='true',
-                timeInForce='GTE_GTC'
-            )
-            log(f"   🎯 TP ордер на бирже: {take_rounded}")
+            client.new_order(symbol=symbol, side=close_side, type='TAKE_PROFIT_MARKET',
+                           stopPrice=take_r, closePosition='true', timeInForce='GTE_GTC')
+            log(f"   TP: {take_r}")
             tp_ok = True
         except Exception as e:
-            log(f"   ⚠️ Ошибка TP ордера: {e}")
+            log(f"   TP ошибка: {e}")
 
-        # Записываем в статистику
-        trade_id = record_open(
-            symbol, direction, entry_price,
-            stop, take, size_usdt, LEVERAGE
-        )
+        trade_id  = record_open(symbol, direction, entry_price, stop, take, size_usdt, LEVERAGE)
+        dir_icon  = "🟢" if direction == 'LONG' else "🔴"
+        sl_status = "✅ биржа" if sl_ok else "⚠️ только бот"
+        tp_status = "✅ биржа" if tp_ok else "⚠️ только бот"
 
-        sl_status = "✅ на бирже" if sl_ok else "⚠️ только бот"
-        tp_status = "✅ на бирже" if tp_ok else "⚠️ только бот"
-
+        # Детальное уведомление об открытии
         send_telegram(
-            f"{'🟢' if direction == 'LONG' else '🔴'} "
-            f"*{direction} {symbol}*\n"
-            f"Вход:  `{entry_price:.4f}`\n"
-            f"Стоп:  `{stop_rounded}` {sl_status}\n"
-            f"Тейк:  `{take_rounded}` {tp_status}\n"
-            f"Размер: `${size_usdt:.2f}` x{LEVERAGE}\n"
-            f"Риск:  `${risk_usdt:.2f}`"
+            f"{dir_icon} *{direction} ОТКРЫТ*\n"
+            f"{'─' * 28}\n"
+            f"📊 Пара:     *{symbol}*\n"
+            f"💵 Вход:     `{entry_price:.5f}`\n"
+            f"🛑 Стоп:     `{stop_r}` {sl_status}\n"
+            f"🎯 Тейк:     `{take_r}` {tp_status}\n"
+            f"{'─' * 28}\n"
+            f"📦 Размер:   `${size_usdt:.2f}` x{LEVERAGE}\n"
+            f"⚠️ Риск:     `${risk_usdt:.2f}` ({RISK_PER_TRADE*100:.0f}%)\n"
+            f"📐 R:R:      `1:{rr}`"
         )
 
         return order, quantity, trade_id
 
     except Exception as e:
-        log(f"❌ Ошибка открытия позиции {symbol}: {e}")
+        log(f"Ошибка открытия {symbol}: {e}")
         return None, None, None
-
-def close_position_manual(symbol, direction, quantity, trade_id, reason):
-    """
-    Принудительное закрытие позиции ботом.
-    Используется только если биржевые SL/TP не сработали.
-    """
-    try:
-        side  = 'SELL' if direction == 'LONG' else 'BUY'
-        price = float(client.ticker_price(symbol=symbol)['price'])
-
-        client.new_order(
-            symbol=symbol,
-            side=side,
-            type='MARKET',
-            quantity=quantity,
-            reduceOnly='true'
-        )
-
-        # Отменяем оставшиеся SL/TP ордера
-        cancel_open_orders(symbol)
-
-        record_close(trade_id, price, reason)
-        stats_text = format_stats_telegram()
-
-        icon = "🎯" if reason == 'TP' else "🛑"
-        log(f"{icon} {reason} {symbol}: закрыто по {price:.4f}")
-        send_telegram(
-            f"{icon} *{reason} — {symbol}*\n"
-            f"Закрыто по: `{price:.4f}`\n\n"
-            f"{stats_text}"
-        )
-        return price
-
-    except Exception as e:
-        log(f"❌ Ошибка закрытия {symbol}: {e}")
-        return None
 
 # ── ПОИСК СЕТАПА ─────────────────────────────────────────────
 
 def find_setup(symbol, df_15m, df_1h):
-    """
-    Ищем торговый сетап на двух таймфреймах.
-    1H определяет тренд, 15M определяет точку входа.
-    """
-    highs_1h, lows_1h  = find_swing_points(df_1h, window=10)
-    structure_1h        = analyze_structure(highs_1h, lows_1h)
-    current_price       = df_15m['close'].iloc[-1]
-
+    highs_1h, lows_1h   = find_swing_points(df_1h, window=10)
+    structure_1h         = analyze_structure(highs_1h, lows_1h)
+    current_price        = df_15m['close'].iloc[-1]
     highs_15m, lows_15m = find_swing_points(df_15m, window=5)
-    liquidity_15m       = find_liquidity_zones(highs_15m, lows_15m, current_price)
-    volume_ratio        = analyze_volume(df_15m)
+    liquidity_15m        = find_liquidity_zones(highs_15m, lows_15m, current_price)
+    volume_ratio         = analyze_volume(df_15m)
 
     support    = liquidity_15m['support']
     resistance = liquidity_15m['resistance']
-
     if not support or not resistance:
         return None
 
     nearest_sup = support[0]
     nearest_res = resistance[0]
+    dist_sup    = (current_price - nearest_sup)  / current_price * 100
+    dist_res    = (nearest_res  - current_price) / current_price * 100
 
-    dist_sup = (current_price - nearest_sup)  / current_price * 100
-    dist_res = (nearest_res  - current_price) / current_price * 100
-
-    if (dist_sup <= 1.5
-            and structure_1h['trend'] == 'BULLISH'
-            and volume_ratio >= 0.8):
+    if dist_sup <= 1.5 and structure_1h['trend'] == 'BULLISH' and volume_ratio >= 0.8:
         entry = current_price
         stop  = nearest_sup * (1 - STOP_LOSS_PCT / 100)
         take  = entry * (1 + TAKE_PROFIT_PCT / 100)
-        return {
-            'direction': 'LONG', 'entry': entry, 'stop': stop, 'take': take,
-            'structure': structure_1h, 'volume': volume_ratio,
-            'reason': f'Поддержка {nearest_sup:.2f}, бычий 1H, объём {volume_ratio:.2f}x'
-        }
+        return {'direction': 'LONG', 'entry': entry, 'stop': stop, 'take': take,
+                'structure': structure_1h, 'volume': volume_ratio,
+                'reason': f'Поддержка {nearest_sup:.5f}, бычий 1H, объём {volume_ratio:.2f}x'}
 
-    if (dist_res <= 1.5
-            and structure_1h['trend'] == 'BEARISH'
-            and volume_ratio >= 0.8):
+    if dist_res <= 1.5 and structure_1h['trend'] == 'BEARISH' and volume_ratio >= 0.8:
         entry = current_price
         stop  = nearest_res * (1 + STOP_LOSS_PCT / 100)
         take  = entry * (1 - TAKE_PROFIT_PCT / 100)
-        return {
-            'direction': 'SHORT', 'entry': entry, 'stop': stop, 'take': take,
-            'structure': structure_1h, 'volume': volume_ratio,
-            'reason': f'Сопротивление {nearest_res:.2f}, медвежий 1H, объём {volume_ratio:.2f}x'
-        }
+        return {'direction': 'SHORT', 'entry': entry, 'stop': stop, 'take': take,
+                'structure': structure_1h, 'volume': volume_ratio,
+                'reason': f'Сопротивление {nearest_res:.5f}, медвежий 1H, объём {volume_ratio:.2f}x'}
 
     return None
 
-# ── ГЛАВНЫЙ ЦИКЛ ─────────────────────────────────────────────
-
-def run():
-    """
-    Главный цикл бота.
-
-    Защиты которые реализованы:
-    1. Реальные SL/TP ордера на бирже — закрываются мгновенно
-    2. Проверка реального состояния позиции на бирже каждый цикл
-    3. Запрет двух позиций по одному символу
-    4. Запрет LONG и SHORT одновременно по одному символу
-    5. Максимум 3 позиции одновременно
-    6. При обнаружении закрытой позиции — отменяем оставшиеся ордера
-    """
-    # Активные позиции: symbol → {direction, quantity, trade_id, stop, take, entry}
-    positions = {}
+# ── ВОССТАНОВЛЕНИЕ ПОЗИЦИЙ ───────────────────────────────────
 
 def restore_positions():
-    """
-    При старте бота читаем открытые позиции с биржи.
-    Это восстанавливает контроль после перезапуска.
-    """
+    """При старте читаем открытые позиции с биржи."""
     restored = {}
     try:
         all_positions = client.get_position_risk()
@@ -470,82 +342,62 @@ def restore_positions():
             direction = 'LONG' if amt > 0 else 'SHORT'
             entry     = float(p['entryPrice'])
             quantity  = abs(amt)
+            mark      = float(p['markPrice'])
+            pnl       = float(p['unRealizedProfit'])
 
-            # Восстанавливаем стоп и тейк из настроек
-            if direction == 'LONG':
-                stop = entry * (1 - STOP_LOSS_PCT / 100)
-                take = entry * (1 + TAKE_PROFIT_PCT / 100)
-            else:
-                stop = entry * (1 + STOP_LOSS_PCT / 100)
-                take = entry * (1 - TAKE_PROFIT_PCT / 100)
+            stop = entry * (1 - STOP_LOSS_PCT / 100) if direction == 'LONG' else entry * (1 + STOP_LOSS_PCT / 100)
+            take = entry * (1 + TAKE_PROFIT_PCT / 100) if direction == 'LONG' else entry * (1 - TAKE_PROFIT_PCT / 100)
 
-            # Создаём запись в статистике
             from trade_stats import load_history
             history  = load_history()
-            open_ids = [t['id'] for t in history if t['status'] == 'OPEN'
-                       and t['symbol'] == symbol]
-
-            if open_ids:
-                trade_id = open_ids[-1]
-                log(f"♻️  Восстановлена позиция: {direction} {symbol} "
-                    f"по {entry:.4f} (trade_id={trade_id})")
-            else:
-                trade_id = record_open(
-                    symbol, direction, entry,
-                    stop, take,
-                    quantity * entry, LEVERAGE
-                )
-                log(f"♻️  Новая запись для позиции: {direction} {symbol} "
-                    f"по {entry:.4f}")
+            open_ids = [t['id'] for t in history if t['status'] == 'OPEN' and t['symbol'] == symbol]
+            trade_id = open_ids[-1] if open_ids else record_open(symbol, direction, entry, stop, take, quantity * entry, LEVERAGE)
 
             restored[symbol] = {
-                'direction': direction,
-                'quantity':  quantity,
-                'trade_id':  trade_id,
-                'entry':     entry,
-                'stop':      stop,
-                'take':      take
+                'direction': direction, 'quantity': quantity,
+                'trade_id': trade_id, 'entry': entry,
+                'stop': stop, 'take': take
             }
+
+            dir_icon = "🟢" if direction == 'LONG' else "🔴"
+            pnl_icon = "📈" if pnl >= 0 else "📉"
+            log(f"Восстановлена: {direction} {symbol} @ {entry:.5f}")
 
             send_telegram(
                 f"♻️ *Восстановлена позиция*\n"
-                f"{direction} {symbol}\n"
-                f"Вход: `{entry:.4f}`\n"
-                f"Стоп: `{stop:.4f}`\n"
-                f"Тейк: `{take:.4f}`"
+                f"{'─' * 28}\n"
+                f"{dir_icon} *{direction} {symbol}*\n"
+                f"💵 Вход:     `{entry:.5f}`\n"
+                f"📍 Текущая:  `{mark:.5f}`\n"
+                f"🛑 Стоп:     `{stop:.5f}`\n"
+                f"🎯 Тейк:     `{take:.5f}`\n"
+                f"{pnl_icon} PnL:     `{pnl:+.4f} USDT`"
             )
 
     except Exception as e:
-        log(f"⚠️ Ошибка восстановления позиций: {e}")
+        log(f"Ошибка восстановления позиций: {e}")
 
-    if restored:
-        log(f"♻️  Восстановлено позиций: {len(restored)}")
-    else:
-        log("♻️  Открытых позиций не найдено")
-
+    log(f"Восстановлено позиций: {len(restored)}")
     return restored
 
+# ── ГЛАВНЫЙ ЦИКЛ ─────────────────────────────────────────────
 
 def run():
     positions = restore_positions()
 
     log("=" * 55)
-
-
-    log("=" * 55)
-    log("🤖 CryptoAutoPro FUTURES запущен")
+    log("CryptoAutoPro FUTURES запущен")
     log(f"   Депозит:  ${TRADE_AMOUNT_USDT} USDT")
     log(f"   Плечо:    x{LEVERAGE}")
     log(f"   Риск/сд:  {RISK_PER_TRADE*100:.0f}% от депо")
     log(f"   SL/TP:    {STOP_LOSS_PCT}% / {TAKE_PROFIT_PCT}%")
-    log(f"   Защита:   Реальные ордера на бирже ✅")
     log("=" * 55)
 
     send_telegram(
         "🤖 *CryptoAutoPro FUTURES запущен*\n"
         f"Депозит: `${TRADE_AMOUNT_USDT}` USDT\n"
         f"Плечо: `x{LEVERAGE}`\n"
-        f"SL/TP: реальные ордера на бирже ✅"
+        f"Риск: `{RISK_PER_TRADE*100:.0f}%` | SL: `{STOP_LOSS_PCT}%` | TP: `{TAKE_PROFIT_PCT}%`"
     )
 
     while True:
@@ -556,87 +408,81 @@ def run():
 
                 # ── Проверяем открытую позицию ───────────────
                 if symbol in positions:
-                    pos = positions[symbol]
-
-                    # Проверяем РЕАЛЬНОЕ состояние на бирже
-                    # Если биржа уже закрыла позицию по SL или TP
+                    pos      = positions[symbol]
                     real_amt = get_real_position(symbol)
 
                     if real_amt == 0:
-                        # Позиция закрыта биржей!
+                        # Позиция закрыта биржей
                         price = float(client.ticker_price(symbol=symbol)['price'])
 
-                        # Определяем результат по P&L
                         if pos['direction'] == 'LONG':
-                            pnl = price - pos['entry']
+                            pnl_pct = (price - pos['entry']) / pos['entry'] * 100
                         else:
-                            pnl = pos['entry'] - price
+                            pnl_pct = (pos['entry'] - price) / pos['entry'] * 100
 
-                        reason = 'TP' if pnl > 0 else 'SL'
+                        reason   = 'TP' if pnl_pct > 0 else 'SL'
+                        icon     = "🎯" if reason == 'TP' else "🛑"
+                        result   = "ПРИБЫЛЬ" if reason == 'TP' else "УБЫТОК"
+                        dir_icon = "🟢" if pos['direction'] == 'LONG' else "🔴"
 
-                        # Отменяем оставшийся ордер (SL если сработал TP и наоборот)
                         cancel_open_orders(symbol)
-
                         record_close(pos['trade_id'], price, reason)
                         stats_text = format_stats_telegram()
 
-                        icon = "🎯" if reason == 'TP' else "🛑"
-                        log(f"{icon} {reason} {symbol}: закрыто биржей по {price:.4f}")
+                        log(f"{icon} {reason} {symbol}: закрыто @ {price:.5f} | P&L {pnl_pct:+.2f}%")
+
+                        # Детальное уведомление о закрытии
                         send_telegram(
-                            f"{icon} *{reason} — {symbol}*\n"
-                            f"Закрыто биржей по: `{price:.4f}`\n\n"
+                            f"{icon} *{result} — {symbol}*\n"
+                            f"{'─' * 28}\n"
+                            f"{dir_icon} Направление: *{pos['direction']}*\n"
+                            f"💵 Вход:      `{pos['entry']:.5f}`\n"
+                            f"🏁 Выход:     `{price:.5f}`\n"
+                            f"🛑 Стоп был:  `{pos['stop']:.5f}`\n"
+                            f"🎯 Тейк был:  `{pos['take']:.5f}`\n"
+                            f"{'─' * 28}\n"
+                            f"{'📈' if reason=='TP' else '📉'} P&L: `{pnl_pct:+.2f}%`\n\n"
                             f"{stats_text}"
                         )
                         del positions[symbol]
                         continue
 
-                    # Позиция ещё открыта — показываем P&L
+                    # Позиция открыта — показываем P&L
                     price = float(client.ticker_price(symbol=symbol)['price'])
                     if pos['direction'] == 'LONG':
                         pnl = (price - pos['entry']) / pos['entry'] * 100
                     else:
                         pnl = (pos['entry'] - price) / pos['entry'] * 100
-                    log(f"📍 {symbol} {pos['direction']}: "
-                        f"P&L {pnl:+.2f}% | цена {price:.4f}")
+                    log(f"📍 {symbol} {pos['direction']}: P&L {pnl:+.2f}% | цена {price:.5f}")
                     continue
 
                 # ── Ищем новый сетап ─────────────────────────
                 if len(positions) >= 3:
-                    continue  # максимум 3 одновременные позиции
+                    continue
 
-                # Защита: проверяем нет ли уже реальной позиции на бирже
-                # (например открытой вручную)
                 real_amt = get_real_position(symbol)
                 if real_amt != 0:
-                    log(f"⚠️ {symbol}: уже есть реальная позиция на бирже, пропускаем")
+                    log(f"⚠️ {symbol}: уже есть позиция на бирже, пропускаем")
                     continue
 
                 df_15m = get_candles(symbol, '15m', 200)
                 df_1h  = get_candles(symbol, '1h',  200)
-
                 if df_15m is None or df_1h is None:
                     continue
 
                 setup = find_setup(symbol, df_15m, df_1h)
-
                 if not setup:
                     log(f"⏳ {symbol}: нет сетапа")
                     time.sleep(0.5)
                     continue
 
-                log(f"🔍 {symbol}: найден сетап {setup['direction']}")
-                log(f"   {setup['reason']}")
+                log(f"Сетап {setup['direction']} {symbol}: {setup['reason']}")
 
-                # ── AI-валидация ──────────────────────────────
                 analysis, rr = validate_trade(
-                    symbol        = symbol,
-                    direction     = setup['direction'],
-                    entry         = setup['entry'],
-                    stop          = setup['stop'],
-                    take          = setup['take'],
-                    structure     = setup['structure'],
-                    volume_ratio  = setup['volume'],
-                    current_price = setup['entry']
+                    symbol=symbol, direction=setup['direction'],
+                    entry=setup['entry'], stop=setup['stop'], take=setup['take'],
+                    structure=setup['structure'], volume_ratio=setup['volume'],
+                    current_price=setup['entry']
                 )
 
                 approved = (
@@ -647,42 +493,31 @@ def run():
                 )
 
                 if not approved:
-                    reason = analysis.get('main_reason', 'нет данных') \
-                             if analysis else 'AI недоступен'
-                    log(f"   ❌ Отклонено: {reason}")
+                    reason = analysis.get('main_reason', 'нет данных') if analysis else 'AI недоступен'
+                    log(f"   Отклонено: {reason}")
                     time.sleep(0.5)
                     continue
 
-                log(f"   ✅ AI одобрил "
-                    f"(уверенность: {analysis.get('confidence')}%, R:R 1:{rr:.2f})")
+                log(f"   AI одобрил (уверенность: {analysis.get('confidence')}%, R:R 1:{rr:.2f})")
 
-                # ── Открываем позицию ─────────────────────────
                 order, qty, trade_id = open_position(
-                    symbol,
-                    setup['direction'],
-                    setup['entry'],
-                    setup['stop'],
-                    setup['take']
+                    symbol, setup['direction'], setup['entry'], setup['stop'], setup['take']
                 )
 
                 if order:
                     positions[symbol] = {
-                        'direction': setup['direction'],
-                        'quantity':  qty,
-                        'trade_id':  trade_id,
-                        'entry':     setup['entry'],
-                        'stop':      setup['stop'],
-                        'take':      setup['take']
+                        'direction': setup['direction'], 'quantity': qty,
+                        'trade_id': trade_id, 'entry': setup['entry'],
+                        'stop': setup['stop'], 'take': setup['take']
                     }
 
                 time.sleep(1)
 
         except Exception as e:
-            log(f"❌ Ошибка главного цикла: {e}")
+            log(f"Ошибка главного цикла: {e}")
 
-        log(f"⏱️  Следующий цикл через 60 сек... "
-            f"(активных позиций: {len(positions)})")
+        log(f"Следующий цикл через 10 сек... (позиций: {len(positions)})")
         log("-" * 55)
-        time.sleep(60)
+        time.sleep(10)
 
 run()

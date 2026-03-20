@@ -291,9 +291,10 @@ def print_results(top):
 
 # ── ЗАПУСК ──────────────────────────────────────────────────
 if __name__ == "__main__":
-    top     = scan()
-    symbols = save_active_symbols(top)
-    print_results(top)
-
-    print(f"\n✅ Сохранено {len(symbols)} пар в {ACTIVE_FILE}")
-    print(f"   Следующий скан через {SCAN_INTERVAL//60} минут")
+    while True:
+        top     = scan()
+        symbols = save_active_symbols(top)
+        print_results(top)
+        print(f"\n✅ Сохранено {len(symbols)} пар в {ACTIVE_FILE}")
+        print(f"   Следующий скан через {SCAN_INTERVAL//60} минут")
+        time.sleep(SCAN_INTERVAL)
