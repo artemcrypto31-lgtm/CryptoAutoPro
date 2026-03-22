@@ -139,7 +139,6 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Статус ───────────────────────────────────────────────
     elif data == "status":
-        # Проверяем статус через PM2
         import json as _json
         try:
             check_proc = subprocess.run(["pm2", "jlist"], capture_output=True)
@@ -150,7 +149,6 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for p in procs
             )
         except:
-            # Запасной вариант
             running = bot_process and bot_process.poll() is None
             
         status   = "🟢 Работает (Active)" if running else "🔴 Остановлен (Stopped)"
@@ -228,45 +226,68 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = f"❌ Ошибка статистики: {e}"
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=main_keyboard())
 
-    # ── Баланс ───────────────────────────────────────────────
+    # ── Баланс (Paper Trading) ───────────────────────────────
     elif data == "balance":
-        await query.edit_message_text("💰 Запрашиваю баланс (Mainnet)...", reply_markup=main_keyboard())
-
-        def fetch_balance():
-            from binance.um_futures import UMFutures
-            client = UMFutures(
-                key=os.getenv('BINANCE_API_KEY'),
-                secret=os.getenv('BINANCE_API_SECRET'),
-                base_url="https://fapi.binance.com"
-            )
-            account = client.account()
-            result = "💰 *Баланс Futures (Mainnet):*\n\n"
-            has_assets = False
-            for asset in account['assets']:
-                bal = float(asset['walletBalance'])
-                if bal > 0:
-                    has_assets = True
-                    pnl = float(asset['unrealizedProfit'])
-                    result += f"  {asset['asset']}: `{bal:.2f}`"
-                    if pnl != 0:
-                        result += f" (PnL: {pnl:+.2f})"
-                    result += "\n"
-            if not has_assets:
-                result += "_Активов с балансом не найдено._\n"
-            result += "\n⚠️ _Для Paper Trading баланс не важен, но здесь показан ваш реальный счет._"
-            return result
-
         try:
-            loop = asyncio.get_running_loop()
-            text = await asyncio.wait_for(
-                loop.run_in_executor(None, fetch_balance),
-                timeout=15
+            import json
+            from trade_stats import calculate_stats, load_history
+
+            VIRTUAL_START = float(os.getenv('TRADE_AMOUNT_USDT', 500))
+            LEVERAGE      = int(os.getenv('FUTURES_LEVERAGE', 3))
+
+            history  = load_history()
+            closed   = [t for t in history if t['status'] == 'CLOSED']
+            opened   = [t for t in history if t['status'] == 'OPEN']
+            stats    = calculate_stats()
+
+            # Считаем нереализованный P&L по открытым позициям
+            unrealized = 0.0
+            pos_file = 'data/active_positions.json'
+            if os.path.exists(pos_file):
+                with open(pos_file, 'r', encoding='utf-8') as f:
+                    positions = json.load(f)
+                try:
+                    from binance.um_futures import UMFutures
+                    bc = UMFutures(base_url="https://fapi.binance.com")
+                    for symbol, p in positions.items():
+                        try:
+                            price = float(bc.ticker_price(symbol=symbol)['price'])
+                            entry = p['entry']
+                            if p['direction'] == 'LONG':
+                                pnl_pct = (price - entry) / entry * 100
+                            else:
+                                pnl_pct = (entry - price) / entry * 100
+                            unrealized += p['size_usdt'] * (pnl_pct / 100) * p.get('leverage', LEVERAGE)
+                        except:
+                            pass
+                except:
+                    pass
+
+            realized_pnl = stats['total_pnl'] if stats else 0.0
+            virtual_balance = VIRTUAL_START + realized_pnl
+
+            pnl_icon  = "📈" if realized_pnl >= 0 else "📉"
+            unr_icon  = "📈" if unrealized  >= 0 else "📉"
+            pnl_pct   = (realized_pnl / VIRTUAL_START * 100) if VIRTUAL_START > 0 else 0
+
+            text = (
+                f"💰 *Виртуальный баланс (Paper Trading)*\n"
+                f"{'─' * 30}\n"
+                f"🏦 Стартовый депозит: `${VIRTUAL_START:.2f}`\n"
+                f"{'─' * 30}\n"
+                f"{pnl_icon} Реализованный P&L: `{realized_pnl:+.2f} USDT` ({pnl_pct:+.1f}%)\n"
+                f"{unr_icon} Нереализованный P&L: `{unrealized:+.2f} USDT`\n"
+                f"{'─' * 30}\n"
+                f"💵 Текущий баланс: *`${virtual_balance:.2f} USDT`*\n"
+                f"{'─' * 30}\n"
+                f"📌 Открытых позиций: *{len(opened)}*\n"
+                f"✅ Закрытых сделок: *{len(closed)}*\n"
+                f"⚙️ Плечо: `x{LEVERAGE}`\n"
+                f"{'─' * 30}\n"
+                f"📡 _Реальные цены Binance, виртуальные деньги_"
             )
-        except asyncio.TimeoutError:
-            text = "❌ Binance не ответил за 15 секунд. Проверь API ключи или соединение."
         except Exception as e:
             text = f"❌ Ошибка баланса: {e}"
-
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=main_keyboard())
 
     # ── Отчёт ────────────────────────────────────────────────
