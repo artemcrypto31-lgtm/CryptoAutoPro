@@ -231,26 +231,42 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Баланс ───────────────────────────────────────────────
     elif data == "balance":
         await query.edit_message_text("💰 Запрашиваю баланс (Mainnet)...", reply_markup=main_keyboard())
-        try:
+
+        def fetch_balance():
             from binance.um_futures import UMFutures
-            client  = UMFutures(
+            client = UMFutures(
                 key=os.getenv('BINANCE_API_KEY'),
                 secret=os.getenv('BINANCE_API_SECRET'),
                 base_url="https://fapi.binance.com"
             )
             account = client.account()
-            text    = "💰 *Баланс Futures (Mainnet):*\n\n"
+            result = "💰 *Баланс Futures (Mainnet):*\n\n"
+            has_assets = False
             for asset in account['assets']:
-                balance = float(asset['walletBalance'])
-                if balance > 0:
-                    pnl   = float(asset['unrealizedProfit'])
-                    text += f"  {asset['asset']}: `{balance:.2f}`"
+                bal = float(asset['walletBalance'])
+                if bal > 0:
+                    has_assets = True
+                    pnl = float(asset['unrealizedProfit'])
+                    result += f"  {asset['asset']}: `{bal:.2f}`"
                     if pnl != 0:
-                        text += f" (PnL: {pnl:+.2f})"
-                    text += "\n"
-            text += "\n⚠️ _Для Paper Trading баланс не важен, но здесь показан ваш реальный счет._"
+                        result += f" (PnL: {pnl:+.2f})"
+                    result += "\n"
+            if not has_assets:
+                result += "_Активов с балансом не найдено._\n"
+            result += "\n⚠️ _Для Paper Trading баланс не важен, но здесь показан ваш реальный счет._"
+            return result
+
+        try:
+            loop = asyncio.get_running_loop()
+            text = await asyncio.wait_for(
+                loop.run_in_executor(None, fetch_balance),
+                timeout=15
+            )
+        except asyncio.TimeoutError:
+            text = "❌ Binance не ответил за 15 секунд. Проверь API ключи или соединение."
         except Exception as e:
             text = f"❌ Ошибка баланса: {e}"
+
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=main_keyboard())
 
     # ── Отчёт ────────────────────────────────────────────────
