@@ -139,16 +139,14 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Статус ───────────────────────────────────────────────
     elif data == "status":
-        import json as _json
+        # Проверяем наличие процесса futures_bot.py в системе
+        import subprocess
         try:
-            check_proc = subprocess.run(["pm2", "jlist"], capture_output=True)
-            procs = _json.loads(check_proc.stdout.decode())
-            running = any(
-                p.get('name') == 'trading-bot' and
-                p.get('pm2_env', {}).get('status') == 'online'
-                for p in procs
-            )
+            # Для Linux/Ubuntu проверяем через pgrep
+            check_proc = subprocess.run(["pgrep", "-f", "futures_bot.py"], capture_output=True)
+            running = check_proc.returncode == 0
         except:
+            # Запасной вариант для других систем
             running = bot_process and bot_process.poll() is None
             
         status   = "🟢 Работает (Active)" if running else "🔴 Остановлен (Stopped)"
@@ -200,7 +198,7 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pnl_pct = (entry - mark) / entry * 100
                     
                     pnl_icon = "📈" if pnl_pct >= 0 else "📉"
-                    pnl_usdt = p['size_usdt'] * (pnl_pct / 100) * p.get('leverage', 3)
+                    pnl_usdt = p['size_usdt'] * (pnl_pct / 100) * 3 # LEVERAGE=3 по умолчанию
 
                     text += (
                         f"{dir_icon} *{direction} {symbol}*\n"
@@ -220,8 +218,50 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Статистика ───────────────────────────────────────────
     elif data == "stats":
         try:
-            from trade_stats import format_stats_telegram
-            text = format_stats_telegram()
+            import json
+            from trade_stats import calculate_stats, load_history
+
+            # Открытые позиции — читаем из active_positions.json (источник правды)
+            pos_file  = 'data/active_positions.json'
+            positions = {}
+            if os.path.exists(pos_file):
+                with open(pos_file, 'r', encoding='utf-8') as f:
+                    positions = json.load(f)
+            open_count = len(positions)
+
+            history = load_history()
+            closed  = [t for t in history if t['status'] == 'CLOSED']
+            stats   = calculate_stats()
+
+            if not stats:
+                text = (
+                    f"📊 *СТАТИСТИКА ТОРГОВЛИ*\n"
+                    f"{'─' * 30}\n"
+                    f"📌 Открытых позиций: *{open_count}*\n"
+                    f"📈 Закрытых сделок пока нет.\n"
+                )
+            else:
+                pf_str   = f"{stats['profit_factor']:.2f}" if stats['profit_factor'] != float('inf') else "∞"
+                pnl_icon = "📈" if stats['total_pnl'] > 0 else "📉"
+                text = (
+                    f"📊 *СТАТИСТИКА ТОРГОВЛИ*\n"
+                    f"{'─' * 30}\n"
+                    f"📌 Открытых позиций: *{open_count}*\n"
+                    f"Сделок закрыто: {stats['total']} "
+                    f"(✅{stats['wins']} / ❌{stats['losses']})\n"
+                    f"Win Rate: *{stats['win_rate']}%*\n"
+                    f"Profit Factor: *{pf_str}*\n"
+                    f"{'─' * 30}\n"
+                    f"{pnl_icon} Общий P&L: *{stats['total_pnl']:+.2f} USDT*\n"
+                    f"💰 Баланс: *{stats['final_equity']:.2f} USDT*\n"
+                    f"📉 Макс. просадка: *{stats['max_drawdown']:.2f}%*\n"
+                    f"{'─' * 30}\n"
+                )
+                if stats['by_symbol']:
+                    text += "*По активам:*\n"
+                    for sym, d in stats['by_symbol'].items():
+                        icon = "✅" if d['pnl'] > 0 else "❌"
+                        text += f"{icon} {sym}: {d['pnl']:+.2f} USDT ({d['trades']} сд.)\n"
         except Exception as e:
             text = f"❌ Ошибка статистики: {e}"
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=main_keyboard())
@@ -235,53 +275,52 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             VIRTUAL_START = float(os.getenv('TRADE_AMOUNT_USDT', 500))
             LEVERAGE      = int(os.getenv('FUTURES_LEVERAGE', 3))
 
-            history  = load_history()
-            closed   = [t for t in history if t['status'] == 'CLOSED']
-            opened   = [t for t in history if t['status'] == 'OPEN']
-            stats    = calculate_stats()
+            history = load_history()
+            closed  = [t for t in history if t['status'] == 'CLOSED']
 
-            # Считаем нереализованный P&L по открытым позициям
-            unrealized = 0.0
-            pos_file = 'data/active_positions.json'
+            # Открытые позиции из active_positions.json (источник правды)
+            pos_file  = 'data/active_positions.json'
+            positions = {}
             if os.path.exists(pos_file):
                 with open(pos_file, 'r', encoding='utf-8') as f:
                     positions = json.load(f)
+
+            stats = calculate_stats()
+
+            # Нереализованный P&L по открытым позициям
+            unrealized = 0.0
+            for symbol, p in positions.items():
                 try:
                     from binance.um_futures import UMFutures
-                    bc = UMFutures(base_url="https://fapi.binance.com")
-                    for symbol, p in positions.items():
-                        try:
-                            price = float(bc.ticker_price(symbol=symbol)['price'])
-                            entry = p['entry']
-                            if p['direction'] == 'LONG':
-                                pnl_pct = (price - entry) / entry * 100
-                            else:
-                                pnl_pct = (entry - price) / entry * 100
-                            unrealized += p['size_usdt'] * (pnl_pct / 100) * p.get('leverage', LEVERAGE)
-                        except:
-                            pass
+                    bc    = UMFutures(base_url="https://fapi.binance.com")
+                    price = float(bc.ticker_price(symbol=symbol)['price'])
+                    entry = p['entry']
+                    if p['direction'] == 'LONG':
+                        pnl_pct = (price - entry) / entry * 100
+                    else:
+                        pnl_pct = (entry - price) / entry * 100
+                    unrealized += p['size_usdt'] * (pnl_pct / 100) * p.get('leverage', LEVERAGE)
                 except:
                     pass
 
-            realized_pnl = stats['total_pnl'] if stats else 0.0
+            realized_pnl    = stats['total_pnl'] if stats else 0.0
             virtual_balance = VIRTUAL_START + realized_pnl
-
-            pnl_icon  = "📈" if realized_pnl >= 0 else "📉"
-            unr_icon  = "📈" if unrealized  >= 0 else "📉"
-            pnl_pct   = (realized_pnl / VIRTUAL_START * 100) if VIRTUAL_START > 0 else 0
+            pnl_pct_total   = (realized_pnl / VIRTUAL_START * 100) if VIRTUAL_START > 0 else 0
+            pnl_icon        = "📈" if realized_pnl >= 0 else "📉"
+            unr_icon        = "📈" if unrealized   >= 0 else "📉"
 
             text = (
                 f"💰 *Виртуальный баланс (Paper Trading)*\n"
                 f"{'─' * 30}\n"
-                f"🏦 Стартовый депозит: `${VIRTUAL_START:.2f}`\n"
+                f"🏦 Стартовый депозит:   `${VIRTUAL_START:.2f}`\n"
                 f"{'─' * 30}\n"
-                f"{pnl_icon} Реализованный P&L: `{realized_pnl:+.2f} USDT` ({pnl_pct:+.1f}%)\n"
+                f"{pnl_icon} Реализованный P&L:   `{realized_pnl:+.2f} USDT` ({pnl_pct_total:+.1f}%)\n"
                 f"{unr_icon} Нереализованный P&L: `{unrealized:+.2f} USDT`\n"
                 f"{'─' * 30}\n"
                 f"💵 Текущий баланс: *`${virtual_balance:.2f} USDT`*\n"
                 f"{'─' * 30}\n"
-                f"📌 Открытых позиций: *{len(opened)}*\n"
-                f"✅ Закрытых сделок: *{len(closed)}*\n"
+                f"📌 Открытых позиций: *{len(positions)}*\n"
+                f"✅ Закрытых сделок:  *{len(closed)}*\n"
                 f"⚙️ Плечо: `x{LEVERAGE}`\n"
                 f"{'─' * 30}\n"
                 f"📡 _Реальные цены Binance, виртуальные деньги_"
