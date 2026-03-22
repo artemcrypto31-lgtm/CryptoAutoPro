@@ -85,6 +85,62 @@ def load_positions():
 
 # ── УТИЛИТЫ ──────────────────────────────────────────────────
 
+def log(message):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{timestamp}] {message}"
+    print(line)
+    if not os.path.exists('logs'): os.makedirs('logs')
+    with open('logs/futures_bot.log', 'a', encoding='utf-8') as f:
+        f.write(line + '\n')
+
+def send_telegram(message):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, json={
+            "chat_id":    TELEGRAM_CHAT_ID,
+            "text":       message,
+            "parse_mode": "Markdown"
+        }, timeout=5)
+    except Exception:
+        pass
+
+def get_active_symbols():
+    asset_file = 'data/futures_active.txt'
+    if os.path.exists(asset_file):
+        with open(asset_file, 'r') as f:
+            symbols = [s.strip() for s in f.readlines() if s.strip()]
+        if symbols:
+            return symbols
+    return DEFAULT_SYMBOLS
+
+# ── РЕАЛЬНЫЕ РЫНОЧНЫЕ ДАННЫЕ ─────────────────────────────────
+
+def get_price(symbol):
+    """Текущая цена с реального Binance."""
+    try:
+        return float(data_client.ticker_price(symbol=symbol)['price'])
+    except Exception as e:
+        log(f"Ошибка цены {symbol}: {e}")
+        return None
+
+def get_candles(symbol, interval='15m', limit=200):
+    """Свечи с реального Binance."""
+    try:
+        raw = data_client.klines(symbol=symbol, interval=interval, limit=limit)
+        df  = pd.DataFrame(raw, columns=[
+            'time', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_volume', 'trades',
+            'taker_buy_base', 'taker_buy_quote', 'ignore'
+        ])
+        df = df[['time', 'open', 'high', 'low', 'close', 'volume']]
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = df[col].astype(float)
+        df['time'] = pd.to_datetime(df['time'], unit='ms')
+        return df
+    except Exception as e:
+        log(f"Ошибка свечей {symbol}: {e}")
+        return None
+
 # ── СТРУКТУРА РЫНКА ──────────────────────────────────────────
 
 def find_swing_points(df, window=10):
@@ -205,7 +261,6 @@ def paper_open(symbol, direction, entry_price, stop, take):
         f"📡 Данные:   реальный Binance"
     )
 
-    save_positions(positions)
     return True, quantity, trade_id
 
 def paper_close(symbol, pos, reason, price, positions):
@@ -365,6 +420,8 @@ def manage_position(symbol, pos, positions):
         else:
             pos['trailing_stop'] = price * (1 + TRAILING_STOP_PCT / 100)
 
+        save_positions(positions)
+
         send_telegram(
             f"🎯 *Тейк-профит — {symbol}*\n"
             f"{'─' * 28}\n"
@@ -490,6 +547,7 @@ def run():
                         'partial_closed':  False,
                         'trailing_stop':   None,
                     }
+                    save_positions(positions)
 
                 time.sleep(1)
 
