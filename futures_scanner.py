@@ -15,11 +15,11 @@ client = UMFutures(
 )
 
 # ── НАСТРОЙКИ ФИЛЬТРОВ ───────────────────────────────────────
-MIN_VOLUME_USDT  = 100_000_000   # минимум $100M объёма за 24ч (РЕАЛЬНЫЙ РЫНОК)
+MIN_VOLUME_USDT  = 100_000_000   # минимум $100M объёма за 24ч
 MIN_TRADES       = 100_000       # минимум 100K сделок за 24ч
 MIN_VOLATILITY   = 2.0           # минимум 2% диапазон за 24ч
 MIN_NATR         = 0.8           # минимум NATR 0.8%
-MAX_BTC_CORR     = 0.85          # макс корреляция (чуть выше для крипто-рынка)
+MAX_BTC_CORR     = 0.85          # макс корреляция
 PREFILTER_TOP    = 50            # берём топ-50 по объёму
 TOP_N            = 10            # финальный топ пар
 SCAN_INTERVAL    = 30 * 60       # каждые 30 минут
@@ -102,7 +102,6 @@ def calculate_atr_natr(symbol, period=14):
         df['low']   = df['low'].astype(float)
         df['close'] = df['close'].astype(float)
 
-        # Считаем True Range
         df['prev_close'] = df['close'].shift(1)
         df['tr'] = df[['high','low','prev_close']].apply(
             lambda r: max(
@@ -176,17 +175,16 @@ def scan():
     # Шаг 2: Статистика за 24ч
     stats_24h = get_24h_stats()
 
-    # Шаг 3: Фильтр объёма, сделок, волатильности
+    # Шаг 3: Фильтр объёма, сделок, волатильности — РЕАЛЬНЫЕ пороги
     candidates = []
     for symbol in all_symbols:
         if symbol not in stats_24h:
             continue
         s = stats_24h[symbol]
 
-        # На тестнете данные меньше — адаптивный порог
-        vol_ok    = s['volume']     >= MIN_VOLUME_USDT * 0.01
-        trades_ok = s['trades']     >= MIN_TRADES      * 0.01
-        vlt_ok    = s['volatility'] >= MIN_VOLATILITY  * 0.1
+        vol_ok    = s['volume']     >= MIN_VOLUME_USDT   # $100M
+        trades_ok = s['trades']     >= MIN_TRADES         # 100K сделок
+        vlt_ok    = s['volatility'] >= MIN_VOLATILITY     # 2% диапазон
 
         if vol_ok and trades_ok and vlt_ok:
             candidates.append({'symbol': symbol, **s})
@@ -217,19 +215,17 @@ def scan():
             results.append(c)
             continue
 
-        # ATR и NATR
         atr, natr = calculate_atr_natr(symbol)
         c['atr']  = atr
         c['natr'] = natr
 
-        # Корреляция
         corr = calculate_correlation(symbol, btc_returns) \
                if btc_returns is not None else 0.5
         c['btc_corr'] = corr
 
-        # Финальные фильтры
-        natr_ok = natr >= MIN_NATR * 0.1   # адаптивный для тестнета
-        corr_ok = corr <= MAX_BTC_CORR
+        # Реальные финальные фильтры
+        natr_ok = natr >= MIN_NATR      # 0.8%
+        corr_ok = corr <= MAX_BTC_CORR  # 0.85
 
         if natr_ok and corr_ok:
             c['score'] = score_symbol(c)
@@ -237,7 +233,6 @@ def scan():
 
         time.sleep(0.15)
 
-        # Прогресс каждые 10 пар
         if (i + 1) % 10 == 0:
             log(f"   Обработано: {i+1}/{len(candidates)}")
 
