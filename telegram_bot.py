@@ -139,14 +139,18 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Статус ───────────────────────────────────────────────
     elif data == "status":
-        # Проверяем наличие процесса futures_bot.py в системе
-        import subprocess
+        # Проверяем статус через PM2
+        import json as _json
         try:
-            # Для Linux/Ubuntu проверяем через pgrep
-            check_proc = subprocess.run(["pgrep", "-f", "futures_bot.py"], capture_output=True)
-            running = check_proc.returncode == 0
+            check_proc = subprocess.run(["pm2", "jlist"], capture_output=True)
+            procs = _json.loads(check_proc.stdout.decode())
+            running = any(
+                p.get('name') == 'trading-bot' and
+                p.get('pm2_env', {}).get('status') == 'online'
+                for p in procs
+            )
         except:
-            # Запасной вариант для других систем
+            # Запасной вариант
             running = bot_process and bot_process.poll() is None
             
         status   = "🟢 Работает (Active)" if running else "🔴 Остановлен (Stopped)"
@@ -198,7 +202,7 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pnl_pct = (entry - mark) / entry * 100
                     
                     pnl_icon = "📈" if pnl_pct >= 0 else "📉"
-                    pnl_usdt = p['size_usdt'] * (pnl_pct / 100) * 3 # LEVERAGE=3 по умолчанию
+                    pnl_usdt = p['size_usdt'] * (pnl_pct / 100) * p.get('leverage', 3)
 
                     text += (
                         f"{dir_icon} *{direction} {symbol}*\n"
