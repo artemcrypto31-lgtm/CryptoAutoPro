@@ -152,48 +152,50 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown', reply_markup=main_keyboard()
         )
 
-    # ── Открытые позиции ─────────────────────────────────────
+    # ── Открытые позиции (Paper Trading) ─────────────────────
     elif data == "positions":
         try:
-            from binance.um_futures import UMFutures
-            client = UMFutures(
-                key=os.getenv('BINANCE_API_KEY'),
-                secret=os.getenv('BINANCE_API_SECRET'),
-                base_url="https://fapi.binance.com"
-            )
-            all_pos  = client.get_position_risk()
-            open_pos = [p for p in all_pos if float(p['positionAmt']) != 0]
-
-            if not open_pos:
-                text = "📌 *Открытых позиций нет*\n\nБот ищет сигналы..."
+            import json
+            pos_file = 'data/active_positions.json'
+            if os.path.exists(pos_file):
+                with open(pos_file, 'r', encoding='utf-8') as f:
+                    positions = json.load(f)
             else:
-                text = f"📌 *Открытые позиции: {len(open_pos)}*\n\n"
-                for p in open_pos:
-                    amt       = float(p['positionAmt'])
-                    entry     = float(p['entryPrice'])
-                    mark      = float(p['markPrice'])
-                    pnl       = float(p['unRealizedProfit'])
-                    direction = 'LONG' if amt > 0 else 'SHORT'
-                    dir_icon  = "🟢" if amt > 0 else "🔴"
-                    pnl_icon  = "📈" if pnl >= 0 else "📉"
+                positions = {}
 
+            if not positions:
+                text = "📌 *Открытых виртуальных позиций нет*\n\nБот ищет сигналы на реальном рынке..."
+            else:
+                text = f"📌 *Открытые позиции (Paper): {len(positions)}*\n\n"
+                for symbol, p in positions.items():
+                    # Получаем текущую цену для актуальности P&L
+                    try:
+                        from binance.um_futures import UMFutures
+                        p_client = UMFutures(base_url="https://fapi.binance.com")
+                        mark = float(p_client.ticker_price(symbol=symbol)['price'])
+                    except:
+                        mark = p['entry'] # если цена не пришла, берем цену входа
+
+                    entry     = p['entry']
+                    direction = p['direction']
+                    dir_icon  = "🟢" if direction == 'LONG' else "🔴"
+                    
                     if direction == 'LONG':
                         pnl_pct = (mark - entry) / entry * 100
-                        stop    = entry * 0.985
-                        take    = entry * 1.030
                     else:
                         pnl_pct = (entry - mark) / entry * 100
-                        stop    = entry * 1.015
-                        take    = entry * 0.970
+                    
+                    pnl_icon = "📈" if pnl_pct >= 0 else "📉"
+                    pnl_usdt = p['size_usdt'] * (pnl_pct / 100) * 3 # LEVERAGE=3 по умолчанию
 
                     text += (
-                        f"{dir_icon} *{direction} {p['symbol']}*\n"
+                        f"{dir_icon} *{direction} {symbol}*\n"
                         f"💵 Вход:     `{entry:.5f}`\n"
                         f"📍 Текущая:  `{mark:.5f}`\n"
-                        f"🛑 Стоп:     `{stop:.5f}`\n"
-                        f"🎯 Тейк:     `{take:.5f}`\n"
-                        f"{pnl_icon} P&L:     `{pnl_pct:+.2f}%` (`{pnl:+.4f} USDT`)\n"
-                        f"📦 Кол-во:  `{abs(amt):.0f}`\n"
+                        f"🛑 Стоп:     `{p['stop']:.5f}`\n"
+                        f"🎯 Тейк:     `{p['take']:.5f}`\n"
+                        f"{pnl_icon} P&L:     `{pnl_pct:+.2f}%` (`{pnl_usdt:+.2f} USDT`)\n"
+                        f"🔄 Трейлинг: `{'Активен' if p.get('trailing_active') else 'Ждёт TP'}`\n"
                         f"{'─' * 28}\n"
                     )
         except Exception as e:
