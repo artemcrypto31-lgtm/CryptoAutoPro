@@ -202,10 +202,18 @@ def print_stats():
 
 def format_stats_telegram():
     """Форматируем статистику для Telegram"""
+    history = load_history()
+    closed  = [t for t in history if t['status'] == 'CLOSED']
+    opened  = [t for t in history if t['status'] == 'OPEN']
+    
     stats = calculate_stats()
 
     if not stats:
-        return "📊 Сделок пока нет. Бот ищет сигналы."
+        text = "📊 *СТАТИСТИКА ТОРГОВЛИ*\n"
+        text += "─" * 30 + "\n"
+        text += f"📌 Открытых позиций: *{len(opened)}*\n"
+        text += "📈 Закрытых сделок пока нет.\n"
+        return text
 
     pf_str = f"{stats['profit_factor']:.2f}" if stats['profit_factor'] != float('inf') else "∞"
     pnl_icon = "📈" if stats['total_pnl'] > 0 else "📉"
@@ -213,7 +221,8 @@ def format_stats_telegram():
     text = (
         f"📊 *СТАТИСТИКА ТОРГОВЛИ*\n"
         f"{'─' * 30}\n"
-        f"Сделок: {stats['total']} "
+        f"📌 Открытых позиций: *{len(opened)}*\n"
+        f"Сделок закрыто: {stats['total']} "
         f"(✅{stats['wins']} / ❌{stats['losses']})\n"
         f"Win Rate: *{stats['win_rate']}%*\n"
         f"Profit Factor: *{pf_str}*\n"
@@ -222,10 +231,6 @@ def format_stats_telegram():
         f"💰 Баланс: *{stats['final_equity']:.2f} USDT*\n"
         f"📉 Макс. просадка: *{stats['max_drawdown']:.2f}%*\n"
         f"{'─' * 30}\n"
-        f"Ср. выигрыш: +{stats['avg_win']:.2f} USDT\n"
-        f"Ср. проигрыш: {stats['avg_loss']:.2f} USDT\n"
-        f"Серия побед: {stats['max_win_streak']}\n"
-        f"Серия поражений: {stats['max_loss_streak']}\n"
     )
 
     if stats['by_symbol']:

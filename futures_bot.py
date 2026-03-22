@@ -231,8 +231,8 @@ def paper_open(symbol, direction, entry_price, stop, take):
 
     risk_usdt  = TRADE_AMOUNT_USDT * RISK_PER_TRADE
     stop_pct   = abs(entry_price - stop) / entry_price
-    # Увеличиваем лимит использования депозита до 50% на сделку
-    size_usdt  = min(risk_usdt / stop_pct, TRADE_AMOUNT_USDT * 0.5)
+    # Возвращаем консервативный лимит 20% на сделку
+    size_usdt  = min(risk_usdt / stop_pct, TRADE_AMOUNT_USDT * 0.2)
     quantity   = round(size_usdt / entry_price, lot_prec)
     stop_r     = round(stop, price_prec)
     take_r     = round(take, price_prec)
