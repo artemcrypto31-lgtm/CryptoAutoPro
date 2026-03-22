@@ -231,7 +231,8 @@ def paper_open(symbol, direction, entry_price, stop, take):
 
     risk_usdt  = TRADE_AMOUNT_USDT * RISK_PER_TRADE
     stop_pct   = abs(entry_price - stop) / entry_price
-    size_usdt  = min(risk_usdt / stop_pct, TRADE_AMOUNT_USDT * 0.2)
+    # Увеличиваем лимит использования депозита до 50% на сделку
+    size_usdt  = min(risk_usdt / stop_pct, TRADE_AMOUNT_USDT * 0.5)
     quantity   = round(size_usdt / entry_price, lot_prec)
     stop_r     = round(stop, price_prec)
     take_r     = round(take, price_prec)
@@ -562,4 +563,10 @@ def run():
         log("-" * 55)
         time.sleep(3)   # проверяем каждые 3 сек — SL/TP не пропустим
 
-run()
+if __name__ == "__main__":
+    try:
+        run()
+    except KeyboardInterrupt:
+        log("🛑 Бот остановлен пользователем (SIGINT)")
+    except Exception as e:
+        log(f"💥 Критическая ошибка при запуске: {e}")
