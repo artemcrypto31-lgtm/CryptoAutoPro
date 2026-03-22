@@ -505,20 +505,24 @@ def run():
                     structure=setup['structure'], volume_ratio=setup['volume']
                 )
 
-                approved = (
-                    analysis is not None
-                    and analysis.get('verdict') == 'APPROVE'
-                    and analysis.get('confidence', 0) >= 65
-                    and rr >= 1.8
-                )
+                # ── ПРОВЕРКА ОДОБРЕНИЯ ───────────────────────
+                ai_approved = analysis is not None and analysis.get('verdict') == 'APPROVE'
+                conf_ok     = analysis.get('confidence', 0) >= 65 if analysis else False
+                rr_ok       = rr >= 1.2  # Снижаем порог до 1.2 для гибкости
 
-                if not approved:
-                    reason = analysis.get('main_reason', 'нет данных') if analysis else 'AI недоступен'
-                    log(f"   ❌ Отклонено: {reason}")
+                if ai_approved and conf_ok and rr_ok:
+                    log(f"   ✅ AI одобрил ({analysis.get('confidence')}%, R:R 1:{rr:.2f})")
+                else:
+                    if not ai_approved:
+                        reason = analysis.get('main_reason', 'нет данных') if analysis else 'AI недоступен'
+                        log(f"   ❌ AI отклонил: {reason}")
+                    elif not conf_ok:
+                        log(f"   ⚠️ Низкая уверенность AI: {analysis.get('confidence')}%")
+                    elif not rr_ok:
+                        log(f"   📉 Плохой R:R: 1:{rr:.2f} (нужно минимум 1.2)")
+                    
                     time.sleep(0.5)
                     continue
-
-                log(f"   ✅ AI одобрил ({analysis.get('confidence')}%, R:R 1:{rr:.2f})")
 
                 # Симулируем открытие
                 ok, qty, trade_id = paper_open(
