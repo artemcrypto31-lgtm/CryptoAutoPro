@@ -15,6 +15,9 @@ OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 TELEGRAM_TOKEN     = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID   = os.getenv('TELEGRAM_CHAT_ID')
 
+BINANCE_KEY        = os.getenv('BINANCE_API_KEY')
+BINANCE_SECRET     = os.getenv('BINANCE_API_SECRET')
+
 LEVERAGE           = int(os.getenv('FUTURES_LEVERAGE', 3))
 TRADE_AMOUNT_USDT  = float(os.getenv('TRADE_AMOUNT_USDT', 500))
 RISK_PER_TRADE     = float(os.getenv('RISK_PER_TRADE', 0.02))
@@ -23,103 +26,64 @@ TAKE_PROFIT_PCT    = 3.0
 TRAILING_STOP_PCT  = 2.0
 PARTIAL_CLOSE_PCT  = 50
 
-DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT']
+DEFAULT_SYMBOLS    = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT']
+POSITIONS_FILE     = 'data/active_positions.json'
+EXCHANGE_CACHE     = {}
 
-# ── ВАЖНО: Paper Trading ──────────────────────────────────────
-# Данные берём с РЕАЛЬНОГО Binance Futures — без API ключей.
-# Это публичные данные, ключи не нужны.
-# Реальные ордера НЕ размещаются — только симуляция.
-# SL/TP срабатывают точно — проверяем реальную цену каждые 3 сек.
-# ─────────────────────────────────────────────────────────────
+# ── ИНИЦИАЛИЗАЦИЯ ────────────────────────────────────────────
 
 data_client = UMFutures(
-    base_url="https://fapi.binance.com"   # реальный Binance, только данные
+    key=BINANCE_KEY,
+    secret=BINANCE_SECRET,
+    base_url="https://fapi.binance.com"
 )
 
-# ── УТИЛИТЫ ──────────────────────────────────────────────────
-
-def log(message):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{timestamp}] {message}"
-    print(line)
-    with open('logs/futures_bot.log', 'a', encoding='utf-8') as f:
-        f.write(line + '\n')
-
-def send_telegram(message):
+def update_exchange_cache():
+    global EXCHANGE_CACHE
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, json={
-            "chat_id":    TELEGRAM_CHAT_ID,
-            "text":       message,
-            "parse_mode": "Markdown"
-        }, timeout=5)
-    except Exception:
-        pass
-
-def get_active_symbols():
-    asset_file = 'data/futures_active.txt'
-    if os.path.exists(asset_file):
-        with open(asset_file, 'r') as f:
-            symbols = [s.strip() for s in f.readlines() if s.strip()]
-        if symbols:
-            return symbols
-    return DEFAULT_SYMBOLS
-
-# ── РЕАЛЬНЫЕ РЫНОЧНЫЕ ДАННЫЕ ─────────────────────────────────
-
-def get_price(symbol):
-    """Текущая цена с реального Binance."""
-    try:
-        return float(data_client.ticker_price(symbol=symbol)['price'])
-    except Exception as e:
-        log(f"Ошибка цены {symbol}: {e}")
-        return None
-
-def get_candles(symbol, interval='15m', limit=200):
-    """Свечи с реального Binance."""
-    try:
-        raw = data_client.klines(symbol=symbol, interval=interval, limit=limit)
-        df  = pd.DataFrame(raw, columns=[
-            'time', 'open', 'high', 'low', 'close', 'volume',
-            'close_time', 'quote_volume', 'trades',
-            'taker_buy_base', 'taker_buy_quote', 'ignore'
-        ])
-        df = df[['time', 'open', 'high', 'low', 'close', 'volume']]
-        for col in ['open', 'high', 'low', 'close', 'volume']:
-            df[col] = df[col].astype(float)
-        df['time'] = pd.to_datetime(df['time'], unit='ms')
-        return df
-    except Exception as e:
-        log(f"Ошибка свечей {symbol}: {e}")
-        return None
-
-def get_lot_precision(symbol):
-    """Точность количества с реального Binance."""
-    try:
+        log("🔄 Обновляем кэш параметров биржи...")
         info = data_client.exchange_info()
         for s in info['symbols']:
-            if s['symbol'] == symbol:
-                for f in s['filters']:
-                    if f['filterType'] == 'LOT_SIZE':
-                        step = float(f['stepSize'])
-                        return len(str(step).rstrip('0').split('.')[-1])
-    except:
-        pass
+            EXCHANGE_CACHE[s['symbol']] = s
+        log(f"✅ Кэш обновлен ({len(EXCHANGE_CACHE)} пар)")
+    except Exception as e:
+        log(f"❌ Ошибка обновления кэша: {e}")
+
+def get_lot_precision(symbol):
+    if symbol in EXCHANGE_CACHE:
+        for f in EXCHANGE_CACHE[symbol]['filters']:
+            if f['filterType'] == 'LOT_SIZE':
+                step = float(f['stepSize'])
+                return len(str(step).rstrip('0').split('.')[-1])
     return 3
 
 def get_price_precision(symbol):
-    """Точность цены с реального Binance."""
-    try:
-        info = data_client.exchange_info()
-        for s in info['symbols']:
-            if s['symbol'] == symbol:
-                for f in s['filters']:
-                    if f['filterType'] == 'PRICE_FILTER':
-                        tick = float(f['tickSize'])
-                        return len(str(tick).rstrip('0').split('.')[-1])
-    except:
-        pass
+    if symbol in EXCHANGE_CACHE:
+        for f in EXCHANGE_CACHE[symbol]['filters']:
+            if f['filterType'] == 'PRICE_FILTER':
+                tick = float(f['tickSize'])
+                return len(str(tick).rstrip('0').split('.')[-1])
     return 2
+
+# ── СОХРАНЕНИЕ СОСТОЯНИЯ ──────────────────────────────────────
+
+def save_positions(positions):
+    try:
+        with open(POSITIONS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(positions, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log(f"❌ Ошибка сохранения позиций: {e}")
+
+def load_positions():
+    if os.path.exists(POSITIONS_FILE):
+        try:
+            with open(POSITIONS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            log(f"❌ Ошибка загрузки позиций: {e}")
+    return {}
+
+# ── УТИЛИТЫ ──────────────────────────────────────────────────
 
 # ── СТРУКТУРА РЫНКА ──────────────────────────────────────────
 
@@ -241,9 +205,10 @@ def paper_open(symbol, direction, entry_price, stop, take):
         f"📡 Данные:   реальный Binance"
     )
 
+    save_positions(positions)
     return True, quantity, trade_id
 
-def paper_close(symbol, pos, reason, price):
+def paper_close(symbol, pos, reason, price, positions):
     """
     Симулируем закрытие позиции.
     Записываем результат в статистику.
@@ -258,6 +223,7 @@ def paper_close(symbol, pos, reason, price):
         pnl_usdt = pos['size_usdt'] * (pnl_pct / 100) * LEVERAGE
 
     record_close(pos['trade_id'], price, reason)
+    save_positions(positions)
     stats_text = format_stats_telegram()
 
     reason_labels = {
@@ -343,8 +309,8 @@ def manage_position(symbol, pos, positions):
              (direction == 'SHORT' and price >= pos['stop'])
 
     if sl_hit and not pos['trailing_active']:
-        paper_close(symbol, pos, 'SL', price)
         del positions[symbol]
+        paper_close(symbol, pos, 'SL', price, positions)
         return
 
     # ── ТРЕЙЛИНГ СТОП (активен после частичного закрытия) ────
@@ -354,10 +320,11 @@ def manage_position(symbol, pos, positions):
                 pos['max_price']     = price
                 pos['trailing_stop'] = price * (1 - TRAILING_STOP_PCT / 100)
                 log(f"   📈 {symbol} новый макс: {price:.5f} | трейлинг: {pos['trailing_stop']:.5f}")
+                save_positions(positions)
 
             if price <= pos['trailing_stop']:
-                paper_close(symbol, pos, 'TRAIL', price)
                 del positions[symbol]
+                paper_close(symbol, pos, 'TRAIL', price, positions)
                 return
 
         else:  # SHORT
@@ -365,10 +332,11 @@ def manage_position(symbol, pos, positions):
                 pos['min_price']     = price
                 pos['trailing_stop'] = price * (1 + TRAILING_STOP_PCT / 100)
                 log(f"   📉 {symbol} новый мин: {price:.5f} | трейлинг: {pos['trailing_stop']:.5f}")
+                save_positions(positions)
 
             if price >= pos['trailing_stop']:
-                paper_close(symbol, pos, 'TRAIL', price)
                 del positions[symbol]
+                paper_close(symbol, pos, 'TRAIL', price, positions)
                 return
 
         # Показываем P&L при трейлинге
@@ -418,11 +386,16 @@ def manage_position(symbol, pos, positions):
 # ── ГЛАВНЫЙ ЦИКЛ ─────────────────────────────────────────────
 
 def run():
-    # В Paper Trading нет реальных позиций на бирже — начинаем чисто
-    positions = {}
+    # Инициализация параметров биржи
+    update_exchange_cache()
+
+    # Загружаем позиции из файла (Paper Trading Persistence)
+    positions = load_positions()
 
     log("=" * 55)
     log("📄 CryptoAutoPro PAPER TRADING запущен")
+    if positions:
+        log(f"   Загружено активных позиций: {len(positions)}")
     log(f"   Данные:   РЕАЛЬНЫЙ Binance Futures")
     log(f"   Депозит:  ${TRADE_AMOUNT_USDT} USDT (виртуальный)")
     log(f"   Плечо:    x{LEVERAGE}")

@@ -157,9 +157,9 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             from binance.um_futures import UMFutures
             client = UMFutures(
-                key=os.getenv('FUTURES_API_KEY'),
-                secret=os.getenv('FUTURES_API_SECRET'),
-                base_url="https://testnet.binancefuture.com"
+                key=os.getenv('BINANCE_API_KEY'),
+                secret=os.getenv('BINANCE_API_SECRET'),
+                base_url="https://fapi.binance.com"
             )
             all_pos  = client.get_position_risk()
             open_pos = [p for p in all_pos if float(p['positionAmt']) != 0]
@@ -212,16 +212,16 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Баланс ───────────────────────────────────────────────
     elif data == "balance":
-        await query.edit_message_text("💰 Запрашиваю баланс...", reply_markup=main_keyboard())
+        await query.edit_message_text("💰 Запрашиваю баланс (Mainnet)...", reply_markup=main_keyboard())
         try:
             from binance.um_futures import UMFutures
             client  = UMFutures(
-                key=os.getenv('FUTURES_API_KEY'),
-                secret=os.getenv('FUTURES_API_SECRET'),
-                base_url="https://testnet.binancefuture.com"
+                key=os.getenv('BINANCE_API_KEY'),
+                secret=os.getenv('BINANCE_API_SECRET'),
+                base_url="https://fapi.binance.com"
             )
             account = client.account()
-            text    = "💰 *Баланс Futures (Testnet):*\n\n"
+            text    = "💰 *Баланс Futures (Mainnet):*\n\n"
             for asset in account['assets']:
                 balance = float(asset['walletBalance'])
                 if balance > 0:
@@ -230,6 +230,7 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if pnl != 0:
                         text += f" (PnL: {pnl:+.2f})"
                     text += "\n"
+            text += "\n⚠️ _Для Paper Trading баланс не важен, но здесь показан ваш реальный счет._"
         except Exception as e:
             text = f"❌ Ошибка баланса: {e}"
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=main_keyboard())

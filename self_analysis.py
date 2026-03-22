@@ -11,75 +11,36 @@ OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 
 def load_trade_history():
     """
-    Загружаем историю сделок из лога бота.
-    Парсим файл logs/bot.log и извлекаем все сделки.
+    Загружаем историю сделок из trade_history.json.
     """
-    trades = []
-    log_file = 'logs/futures_bot.log'
+    history_file = 'data/trade_history.json'
 
-    if not os.path.exists(log_file):
-        print("⚠️  Лог файл не найден. Используем тестовые данные.")
+    if not os.path.exists(history_file):
+        print("⚠️  Файл истории сделок не найден. Используем тестовые данные.")
         return get_test_trades()
 
-    with open(log_file, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
+    try:
+        with open(history_file, 'r', encoding='utf-8') as f:
+            raw_history = json.load(f)
 
-    current_trade = None
-
-    for line in lines:
-        # Ищем открытие позиции
-        if 'LONG открыт' in line or 'SHORT открыт' in line:
-            parts = line.strip().split()
-            current_trade = {
-                'open_time': f"{parts[0]} {parts[1]}".replace('[','').replace(']',''),
-                'type':      'LONG' if 'LONG' in line else 'SHORT',
-                'entry':     None,
-                'exit':      None,
-                'result':    None,
-                'close_time': None,
-                'reason_open': line.strip()
-            }
-            # Извлекаем цену входа
-            for p in parts:
-                try:
-                    if float(p) > 1000:
-                        current_trade['entry'] = float(p)
-                        break
-                except:
-                    pass
-
-        # Ищем закрытие позиции
-        if current_trade and ('Позиция закрыта' in line or
-                               'STOP-LOSS' in line or
-                               'TAKE-PROFIT' in line):
-            parts = line.strip().split()
-            current_trade['close_time'] = (
-                f"{parts[0]} {parts[1]}".replace('[','').replace(']','')
-            )
-
-            if 'Stop-Loss' in line:
-                current_trade['result'] = 'LOSS'
-                current_trade['exit_reason'] = 'Stop-Loss'
-            elif 'Take-Profit' in line:
-                current_trade['result'] = 'WIN'
-                current_trade['exit_reason'] = 'Take-Profit'
-            else:
-                current_trade['result'] = 'UNKNOWN'
-                current_trade['exit_reason'] = 'Manual'
-
-            # Извлекаем цену выхода
-            for p in parts:
-                try:
-                    if float(p) > 1000:
-                        current_trade['exit'] = float(p)
-                        break
-                except:
-                    pass
-
-            trades.append(current_trade)
-            current_trade = None
-
-    return trades if trades else get_test_trades()
+        trades = []
+        for t in raw_history:
+            if t['status'] == 'CLOSED':
+                trades.append({
+                    'open_time':  t['open_time'],
+                    'close_time': t['close_time'],
+                    'type':       t['direction'],
+                    'entry':      t['entry_price'],
+                    'exit':       t['exit_price'],
+                    'result':     'WIN' if t['pnl_usdt'] > 0 else 'LOSS',
+                    'exit_reason': t.get('exit_reason', 'Unknown'),
+                    'pnl_pct':    t['pnl_pct'],
+                    'symbol':     t['symbol']
+                })
+        return trades if trades else get_test_trades()
+    except Exception as e:
+        print(f"❌ Ошибка чтения истории: {e}")
+        return get_test_trades()
 
 def get_test_trades():
     """

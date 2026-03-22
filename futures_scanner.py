@@ -9,25 +9,25 @@ from datetime import datetime
 load_dotenv()
 
 client = UMFutures(
-    key=os.getenv('FUTURES_API_KEY'),
-    secret=os.getenv('FUTURES_API_SECRET'),
-    base_url="https://testnet.binancefuture.com"
+    key=os.getenv('BINANCE_API_KEY'),
+    secret=os.getenv('BINANCE_API_SECRET'),
+    base_url="https://fapi.binance.com"
 )
 
 # ── НАСТРОЙКИ ФИЛЬТРОВ ───────────────────────────────────────
-MIN_VOLUME_USDT  = 100_000_000   # минимум $100M объёма за 24ч
-MIN_TRADES       = 750_000       # минимум 500K сделок за 24ч
-MIN_VOLATILITY   = 1.5           # минимум 1% диапазон за 24ч
-MIN_NATR         = 1.0          # минимум NATR 1.5%
-MAX_BTC_CORR     = 0.75          # максимальная корреляция с BTC
-PREFILTER_TOP    = 30            # берём топ-50 по объёму до корреляции
+MIN_VOLUME_USDT  = 100_000_000   # минимум $100M объёма за 24ч (РЕАЛЬНЫЙ РЫНОК)
+MIN_TRADES       = 100_000       # минимум 100K сделок за 24ч
+MIN_VOLATILITY   = 2.0           # минимум 2% диапазон за 24ч
+MIN_NATR         = 0.8           # минимум NATR 0.8%
+MAX_BTC_CORR     = 0.85          # макс корреляция (чуть выше для крипто-рынка)
+PREFILTER_TOP    = 50            # берём топ-50 по объёму
 TOP_N            = 10            # финальный топ пар
-SCAN_INTERVAL    = 30 * 60       # пересканируем каждые 30 минут
+SCAN_INTERVAL    = 30 * 60       # каждые 30 минут
 ACTIVE_FILE      = 'data/futures_active.txt'
 
 EXCLUDED = {
     'USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'BUSDUSDT',
-    'DAIUSDT',  'USDTUSDT',  'BTCDOMUSDT'
+    'DAIUSDT',  'USDTUSDT',  'BTCDOMUSDT', 'DEFIUSDT'
 }
 
 def log(msg):
