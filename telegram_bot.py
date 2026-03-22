@@ -139,14 +139,26 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Статус ───────────────────────────────────────────────
     elif data == "status":
-        running  = bot_process and bot_process.poll() is None
-        status   = "🟢 Работает" if running else "🔴 Остановлен"
+        # Проверяем наличие процесса futures_bot.py в системе
+        import subprocess
+        try:
+            # Для Linux/Ubuntu проверяем через pgrep
+            check_proc = subprocess.run(["pgrep", "-f", "futures_bot.py"], capture_output=True)
+            running = check_proc.returncode == 0
+        except:
+            # Запасной вариант для других систем
+            running = bot_process and bot_process.poll() is None
+            
+        status   = "🟢 Работает (Active)" if running else "🔴 Остановлен (Stopped)"
         last_log = "Нет данных"
         if os.path.exists('logs/futures_bot.log'):
-            with open('logs/futures_bot.log', 'r', encoding='utf-8') as f:
-                lines = [l.strip() for l in f.readlines() if l.strip()]
-                if lines:
-                    last_log = lines[-1]
+            try:
+                with open('logs/futures_bot.log', 'r', encoding='utf-8') as f:
+                    lines = [l.strip() for l in f.readlines() if l.strip()]
+                    if lines:
+                        last_log = lines[-1]
+            except: pass
+
         await query.edit_message_text(
             f"📊 *Статус системы*\n\nБот: {status}\n\nПоследнее действие:\n`{last_log}`",
             parse_mode='Markdown', reply_markup=main_keyboard()
